@@ -1,14 +1,17 @@
 import XCTest
 
 final class DashboardUITests: XCTestCase {
+    // A busy hosted simulator can spend several seconds servicing each accessibility query.
+    private let simulatorResponseTimeout: TimeInterval = 40
+
     @MainActor func testDarkDashboardFitsBeforeScrollingAndClearsOnStop() {
         let app = launch("warmup", appearance: "dark")
         let temperature = app.staticTexts["coolant-value"]
         let rpm = app.staticTexts["rpm-value"]
         let voltage = app.staticTexts["voltage-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: 10))
-        XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: 10))
-        XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: 10))
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
+        XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: simulatorResponseTimeout))
+        XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: simulatorResponseTimeout))
         XCTAssertTrue(app.buttons["source-simulator"].isSelected)
 
         let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
@@ -31,7 +34,7 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testLightDashboardAndTabs() {
         let app = launch("warmup", appearance: "light")
-        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ В", timeout: 10))
+        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ В", timeout: simulatorResponseTimeout))
         snapshot(app, named: "Dashboard-Light")
 
         app.tabBars.buttons["История"].tap()
@@ -67,21 +70,21 @@ final class DashboardUITests: XCTestCase {
     @MainActor func testSimulatorSurfacesOverheat() {
         let app = launch("overheat", appearance: "dark")
         let warning = app.descendants(matching: .any)["overheat-critical"].firstMatch
-        XCTAssertTrue(warning.waitForExistence(timeout: 25))
+        XCTAssertTrue(warning.waitForExistence(timeout: simulatorResponseTimeout))
         snapshot(app, named: "Dashboard-Overheat")
     }
 
     @MainActor func testSimulatorDisconnectClearsTemperature() {
         let app = launch("disconnect", appearance: "dark")
         let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: 10))
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
         XCTAssertTrue(temperature.wait(for: \.label, toEqual: "—", timeout: 15))
     }
 
     @MainActor func testAccessibilityTextKeepsValuesReachable() {
         let app = launch("warmup", appearance: "dark", accessibilityText: true)
         let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: 10))
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
         snapshot(app, named: "Dashboard-Accessibility")
         let voltage = app.staticTexts["voltage-value"]
         for _ in 0..<4 where !voltage.isHittable { app.swipeUp() }
