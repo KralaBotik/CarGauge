@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#354046"/>
+      <stop offset=".53" stop-color="#252d31"/>
+      <stop offset="1" stop-color="#171b1e"/>
+    </linearGradient>
+    <linearGradient id="copper" x1="0" y1="1" x2="1" y2="0" gradientUnits="objectBoundingBox">
+      <stop stop-color="#ad754d"/>
+      <stop offset=".63" stop-color="#e6b88c"/>
+      <stop offset="1" stop-color="#ffe0ba"/>
+    </linearGradient>
+    <linearGradient id="bezel" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#657376"/>
+      <stop offset="1" stop-color="#30393d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#body)"/>
+  <path d="M296 708 A289 289 0 1 1 728 708" fill="none" stroke="#151b1d" stroke-width="70" stroke-linecap="round"/>
+  <path d="M296 708 A289 289 0 1 1 728 708" fill="none" stroke="url(#bezel)" stroke-width="32" stroke-linecap="round"/>
+  <path d="M296 708 A289 289 0 0 1 688 286" fill="none" stroke="url(#copper)" stroke-width="32" stroke-linecap="round"/>
+  <g stroke="#bbc9c9" stroke-width="10" stroke-linecap="round">
+    <path d="M338 549h25"/>
+    <path d="M387 416l18 18"/>
+    <path d="M512 361v25"/>
+    <path d="M638 416l-18 18"/>
+    <path d="M687 549h-25"/>
+  </g>
+  <path d="M512 549l128-140-101 162z" fill="#fff2dd"/>
+  <circle cx="512" cy="549" r="34" fill="#ead2ae"/>
+  <circle cx="512" cy="549" r="15" fill="#293235"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M406 732c35 0 35-22 70-22s35 22 70 22 35-22 70-22" stroke="#a6c5b6" stroke-width="14"/>
+    <path d="M439 772c28 0 28-17 56-17s28 17 56 17 28-17 56-17" stroke="#6e9184" stroke-width="10"/>
+  </g>
+</svg>

@@ -25,13 +25,25 @@ derived="$output/DerivedData"
 } 2>&1 | tee "$output/CarGauge-Setup.log"
 
 status=0
-if simulator="$(xcrun simctl list devices available --json | python3 scripts/select_simulator.py)"; then
+devices="$(xcrun simctl list devices available --json)"
+if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"; then
+  runtime="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py --runtime-id)"
+  if compact="$(xcrun simctl create 'CarGauge iPhone 11' com.apple.CoreSimulator.SimDeviceType.iPhone-11 "$runtime")"; then
+    simulator="$compact"
+    echo "Using iPhone 11 simulator on $runtime"
+  else
+    echo "iPhone 11 unavailable on $runtime; using the installed iPhone simulator"
+  fi
   if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
     -destination "platform=iOS Simulator,id=$simulator" \
     -derivedDataPath "$derived" -parallel-testing-enabled NO \
     -resultBundlePath "$output/CarGauge-UI.xcresult" test \
     2>&1 | tee "$output/CarGauge-Simulator.log"; then
     status=1
+  fi
+  if [[ -d "$output/CarGauge-UI.xcresult" ]]; then
+    xcrun xcresulttool export attachments --path "$output/CarGauge-UI.xcresult" \
+      --output-path "$output/screenshots" || echo "Screenshots are available in the xcresult bundle."
   fi
 else
   status=1
@@ -43,6 +55,7 @@ if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Relea
   2>&1 | tee "$output/CarGauge-Device.log"; then
   if [[ "$status" -eq 0 ]]; then
     app="$derived/Build/Products/Release-iphoneos/$scheme.app"
+    test -f "$app/Assets.car"
     python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
       2>&1 | tee -a "$output/CarGauge-Device.log"
   fi

@@ -76,6 +76,7 @@ jobs:
             .artifacts/ios.*/*.log
             .artifacts/ios.*/CarGauge-UI.xcresult
             .artifacts/ios.*/CarGauge-Device.xcresult
+            .artifacts/ios.*/screenshots
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn

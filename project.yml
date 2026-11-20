@@ -29,6 +29,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(CARGAUGE_BUNDLE_ID)
         INFOPLIST_FILE: Config/App-Info.plist
         CODE_SIGN_ENTITLEMENTS: Config/App.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: CarGaugePackage
         product: CarGaugeCore
@@ -62,6 +63,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(CARGAUGE_BUNDLE_ID).basic
         INFOPLIST_FILE: Config/Basic-Info.plist
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CARGAUGE_BASIC"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: CarGaugePackage
         product: CarGaugeCore

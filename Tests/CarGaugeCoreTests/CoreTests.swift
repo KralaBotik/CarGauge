@@ -173,3 +173,39 @@ import Testing
     try await transport.connect()
     #expect(try await transport.exchange("ATZ", timeout: 1) == "ELM327 v2.3\r>")
 }
+
+@Test func temperaturesFollowConfiguredLimitsAndHysteresis() throws {
+    let thresholds = try #require(ThermalThresholds(operating: 75, warning: 95, critical: 105))
+    #expect(thresholds.state(at: 74, alert: .normal) == .warmingUp)
+    #expect(thresholds.state(at: 75, alert: .normal) == .operating)
+    #expect(thresholds.state(at: 95, alert: .normal) == .warning)
+    #expect(thresholds.state(at: 105, alert: .normal) == .critical)
+    #expect(thresholds.setting(.critical, to: 96) == nil)
+    #expect(thresholds.range(for: .warning).upperBound == 101)
+    #expect(try JSONDecoder().decode(ThermalThresholds.self, from: JSONEncoder().encode(thresholds)) == thresholds)
+    #expect(throws: DecodingError.self) {
+        _ = try JSONDecoder().decode(ThermalThresholds.self,
+                                     from: Data(#"{"operating":75,"warning":105,"critical":95}"#.utf8))
+    }
+
+    let now = Date()
+    var monitor = OverheatMonitor()
+    monitor.apply(thresholds)
+    #expect(monitor.update(Reading(106, at: now), at: now) == .critical)
+    let cooling = Reading(103, at: now)
+    #expect(thresholds.state(at: cooling.value, alert: monitor.update(cooling, at: now)) == .critical)
+    #expect(monitor.update(Reading(101, at: now), at: now) == .warning)
+}
+
+@Test func graphDoesNotJoinAcrossFastReconnectOrMissingSamples() {
+    let start = Date(timeIntervalSince1970: 100)
+    var history = WarmupHistory(capacity: 4)
+    history.append(Reading(30, at: start))
+    history.append(Reading(31, at: start + 1))
+    history.interrupt()
+    history.append(Reading(34, at: start + 3))
+    history.append(Reading(35, at: start + 4))
+    #expect(history.points.map(\.segment) == [0, 0, 1, 1])
+    history.append(Reading(45, at: start + 9))
+    #expect(history.points.map(\.segment) == [0, 1, 1, 2])
+}

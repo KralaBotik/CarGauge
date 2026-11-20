@@ -17,8 +17,8 @@ for runtime, devices in devices_by_runtime.items():
     version = tuple(map(int, name.removeprefix("iOS-").split("-")))
     for device in devices:
         if device.get("isAvailable") and device["name"].startswith("iPhone"):
-            candidates.append((version, device["state"] == "Booted", device["name"], device["udid"]))
+            candidates.append((version, device["state"] == "Booted", device["name"], runtime, device["udid"]))
 
 if not candidates:
     sys.exit(f"No available iPhone simulator for {requested or 'any iOS runtime'}")
-print(max(candidates)[-1])
+print(max(candidates)[-2 if "--runtime-id" in sys.argv else -1])

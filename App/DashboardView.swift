@@ -1,224 +1,142 @@
 import CarGaugeCore
-import Charts
 import SwiftUI
 
 struct DashboardView: View {
     @ObservedObject var model: DashboardModel
-    let isActive: Bool
+    @Environment(\.gaugePalette) private var palette
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var previewDate: Date?
+    let showHistory: () -> Void
+    let showDiagnostics: () -> Void
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        measurements(at: context.date)
+        GaugePage {
+            HStack(alignment: .center, spacing: GaugeSpacing.small) {
+                GaugeHeading(title: "CarGauge", subtitle: "Hyundai Elantra HD · G4FC")
+                sessionButton
+            }
+            sourceSwitch
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let now = previewDate ?? context.date
+                VStack(spacing: GaugeSpacing.medium) {
+                    TemperatureInstrument(value: model.coolant?.gaugeValue(at: now), thresholds: model.thresholds,
+                                          alert: model.level, phase: model.phase, source: model.source)
+                    metricStrip(at: now)
+                }
+            }
+            GaugePanel {
+                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("График прогрева").font(.headline).accessibilityAddTraits(.isHeader)
+                            Text("Последние 5 мин").font(.caption).foregroundStyle(palette.muted)
+                        }
+                        .accessibilityIdentifier("chart-preview")
+                        Spacer(minLength: GaugeSpacing.small)
+                        Button(action: showHistory) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(GaugeActionStyle())
+                        .accessibilityLabel("Открыть историю")
                     }
-                    warmupChart
-                    controls
-                }
-                .frame(maxWidth: 580)
-                .padding()
-                .frame(maxWidth: .infinity)
-            }
-            .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("CarGauge")
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Hyundai Elantra HD · G4FC")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Picker("Источник", selection: Binding(get: { model.source }, set: { model.switchSource(to: $0) })) {
-                Text("Симулятор").tag(DataSource.simulator)
-                Text("Автомобиль").tag(DataSource.vehicle)
-            }
-            .pickerStyle(.segmented)
-            Label(model.status, systemImage: model.isRunning ? "dot.radiowaves.left.and.right" : "circle")
-                .font(.subheadline)
-                .accessibilityIdentifier("connection-status")
-        }
-    }
-
-    private func measurements(at now: Date) -> some View {
-        let reading = model.coolant.flatMap { $0.isFresh(at: now) ? $0 : nil }
-        let rpm = model.supplementary?.rpm.flatMap { $0.isFresh(at: now) ? $0 : nil }
-        let voltage = model.supplementary?.voltage.flatMap { $0.isFresh(at: now) ? $0 : nil }
-        let temperature = reading.map { "\(Int($0.value)) °C" } ?? "—"
-
-        return VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Температура ОЖ", systemImage: "thermometer.medium")
-                    .font(.headline)
-                Text(temperature)
-                    .font(.system(size: 72, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.45)
-                    .lineLimit(1)
-                    .accessibilityIdentifier("coolant-value")
-                Text(reading == nil ? "Нет свежих данных · PID 0105" : "PID 0105")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                if model.level != .normal {
-                    Label(warningText(fresh: reading != nil), systemImage: "exclamationmark.triangle.fill")
-                        .font(.subheadline.bold())
-                        .foregroundStyle(model.level == .critical ? Color.red : Color.orange)
-                        .accessibilityIdentifier(model.level == .critical ? "overheat-critical" : "overheat-warning")
+                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: true)
+                        .accessibilityIdentifier("warmup-plot")
                 }
             }
-            .card()
-            HStack(alignment: .top, spacing: 12) {
-                metric("Обороты", value: rpm.map { "\(Int($0.value.rounded()))" } ?? "—", detail: "об/мин",
-                       id: "rpm-value")
-                metric("Напряжение", value: voltage.map { "\($0.value.formatted(.number.precision(.fractionLength(1)))) В" } ?? "—",
-                       detail: voltage == nil ? "Нет данных" : (model.supplementary?.voltageSource == .adapter ? "Адаптер · ATRV" : "ECU · 0142"),
-                       id: "voltage-value")
-            }
-            #if !CARGAUGE_BASIC
-            if model.activityIsRunning || isActive {
-                Button(model.activityIsRunning ? "Завершить Live Activity" : "Начать Live Activity") {
-                    model.toggleActivity()
-                }
-                .buttonStyle(.bordered)
-                .disabled(!model.activityIsRunning && reading == nil)
-                .accessibilityIdentifier("live-activity-button")
-            }
-            #endif
-            if let message = model.presentationMessage {
-                Text(message).font(.footnote).foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("instruments-screen")
+    }
+
+    private var needsAdapter: Bool { model.source == .vehicle && model.ble.selectedID == nil }
+
+    private var sessionButton: some View {
+        Button {
+            if model.isRunning { model.stop() }
+            else if needsAdapter { showDiagnostics() }
+            else { model.start() }
+        } label: {
+            Image(systemName: model.isRunning ? "pause.fill" : (needsAdapter ? "link" : "play.fill"))
+                .frame(width: 20)
+        }
+        .buttonStyle(GaugeActionStyle())
+        .accessibilityLabel(model.isRunning ? "Остановить измерение" : (needsAdapter ? "Выбрать адаптер" : "Начать измерение"))
+        .accessibilityIdentifier(model.isRunning ? "stop-measurement" : (needsAdapter ? "open-diagnostics" : "start-measurement"))
+    }
+
+    private var sourceSwitch: some View {
+        let layout = typeSize.isAccessibilityCategory ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
+        return layout {
+            sourceButton(.simulator, label: "Симулятор", symbol: "flask")
+            sourceButton(.vehicle, label: "Автомобиль", symbol: "car.side")
+        }
+        .padding(GaugeSpacing.xsmall)
+        .background(palette.panel, in: RoundedRectangle(cornerRadius: 15))
+        .overlay { RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line).allowsHitTesting(false) }
+    }
+
+    private func sourceButton(_ source: DataSource, label: String, symbol: String) -> some View {
+        let active = model.source == source
+        return Button {
+            model.switchSource(to: source)
+        } label: {
+            Label(label, systemImage: symbol)
+                .font(.subheadline.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? palette.accent : palette.muted)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(active ? palette.accentWash : Color.clear, in: RoundedRectangle(cornerRadius: 11))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityIdentifier("source-\(source.rawValue)")
+    }
+
+    private func metricStrip(at now: Date) -> some View {
+        let rpm = model.supplementary?.rpm?.gaugeValue(at: now)
+        let voltage = model.supplementary?.voltage?.gaugeValue(at: now)
+        let rpmLabel = rpm.map { String(Int($0.rounded())) } ?? "—"
+        let voltageLabel = voltage.map { "\($0.formatted(.number.precision(.fractionLength(1)))) В" } ?? "—"
+        let voltageDetail = voltage == nil ? "Нет данных" : (model.supplementary?.voltageSource == .adapter ? "По адаптеру" : "Блок управления")
+        let layout = typeSize.isAccessibilityCategory
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.medium))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: GaugeSpacing.large))
+
+        return GaugePanel {
+            layout {
+                GaugeMetric(title: "ОБОРОТЫ", symbol: "gauge.with.dots.needle.33percent",
+                            value: rpmLabel, detail: "об/мин", id: "rpm-value")
+                Rectangle().fill(palette.line)
+                    .frame(width: typeSize.isAccessibilityCategory ? nil : 1,
+                           height: typeSize.isAccessibilityCategory ? 1 : 69)
+                    .accessibilityHidden(true)
+                GaugeMetric(title: "НАПРЯЖЕНИЕ", symbol: "bolt",
+                            value: voltageLabel, detail: voltageDetail, id: "voltage-value")
             }
         }
     }
+}
 
-    private func warningText(fresh: Bool) -> String {
-        if !fresh { return "Последнее измерение было высоким · связь с ECU прервана или данные устарели" }
-        return model.level == .critical ? "Критическая температура ОЖ" : "Высокая температура ОЖ"
-    }
+private struct GaugeMetric: View {
+    @Environment(\.gaugePalette) private var palette
+    @ScaledMetric(relativeTo: .title) private var numberSize: CGFloat = 34
+    let title: String
+    let symbol: String
+    let value: String
+    let detail: String
+    let id: String
 
-    private func metric(_ title: String, value: String, detail: String, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.subheadline).foregroundStyle(.secondary)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            GaugeCaption(title: title, symbol: symbol)
             Text(value)
-                .font(.title2.bold().monospacedDigit())
-                .minimumScaleFactor(0.55)
+                .font(.system(size: numberSize, weight: .semibold))
+                .monospacedDigit()
                 .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .accessibilityIdentifier(id)
-            Text(detail).font(.caption).foregroundStyle(.secondary)
+            Text(detail).font(.caption).foregroundStyle(palette.muted)
         }
-        .card()
-    }
-
-    private var warmupChart: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("График прогрева").font(.headline)
-            if model.history.count < 2 {
-                Text("График появится после двух замеров.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            } else {
-                Chart {
-                    ForEach(chartPoints, id: \.reading.timestamp) { point in
-                        LineMark(x: .value("Время", point.reading.timestamp),
-                                 y: .value("°C", point.reading.value),
-                                 series: .value("Участок", point.segment))
-                            .foregroundStyle(Color.accentColor)
-                        PointMark(x: .value("Время", point.reading.timestamp), y: .value("°C", point.reading.value))
-                            .symbolSize(8)
-                            .foregroundStyle(Color.accentColor)
-                    }
-                    RuleMark(y: .value("Порог предупреждения", 105))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(.orange.opacity(0.75))
-                }
-                .chartYAxisLabel("°C")
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) {
-                        AxisGridLine()
-                        AxisValueLabel(format: .dateTime.minute().second())
-                    }
-                }
-                .frame(height: 155)
-                .accessibilityIdentifier("warmup-chart")
-            }
-            Text("Пороги прототипа: 105 и 115 °C. Сверяйтесь со штатной индикацией автомобиля.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .card()
-    }
-
-    private struct ChartPoint {
-        let reading: Reading
-        let segment: Int
-    }
-
-    private var chartPoints: [ChartPoint] {
-        var segment = 0
-        var last: Date?
-        return model.history.map { reading in
-            if let last, reading.timestamp.timeIntervalSince(last) >= 5 { segment += 1 }
-            last = reading.timestamp
-            return ChartPoint(reading: reading, segment: segment)
-        }
-    }
-
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if model.source == .simulator {
-                LabeledContent("Источник данных") {
-                    Text("Симулятор OBD-II").accessibilityIdentifier("simulator-source")
-                }
-                Picker("Сценарий", selection: Binding(get: { model.scenario }, set: { model.setScenario($0) })) {
-                    Text("Прогрев").tag(SimulationScenario.warmup)
-                    Text("Перегрев").tag(SimulationScenario.overheat)
-                    Text("Напряжение через ATRV").tag(SimulationScenario.noVoltagePID)
-                    Text("Обрыв связи").tag(SimulationScenario.disconnect)
-                }
-            } else {
-                AdapterControls(ble: model.ble, isRunning: model.isRunning, onSelect: model.selectDevice(_:))
-                Toggle("Автоподключение", isOn: $model.autoConnect)
-                Button("Разрешить уведомления о температуре") {
-                    Task { await model.requestWarningNotifications() }
-                }
-            }
-            Button(model.isRunning ? "Остановить измерение" : "Начать измерение") {
-                if model.isRunning { model.stop() } else { model.start() }
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityIdentifier(model.isRunning ? "stop-measurement" : "start-measurement")
-        }
-        .card()
-    }
-}
-
-private struct AdapterControls: View {
-    @ObservedObject var ble: BLETransport
-    let isRunning: Bool
-    let onSelect: (UUID) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(ble.diagnostic).font(.subheadline).foregroundStyle(.secondary)
-            if !isRunning {
-                Button("Найти Vgate по Bluetooth") { ble.discover() }
-                ForEach(ble.devices) { device in
-                    Button {
-                        onSelect(device.id)
-                    } label: {
-                        LabeledContent(device.name, value: "\(device.rssi) dBm")
-                    }
-                }
-            }
-        }
-    }
-}
-
-private extension View {
-    func card() -> some View {
-        self.frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
