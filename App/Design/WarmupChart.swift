@@ -71,7 +71,8 @@ struct WarmupChart: View {
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: compact ? 3 : 4)) {
                 AxisGridLine().foregroundStyle(palette.line.opacity(0.55))
-                AxisValueLabel(format: timeFormat).foregroundStyle(palette.muted)
+                AxisValueLabel(format: timeFormat, anchor: .top, collisionResolution: .greedy)
+                    .foregroundStyle(palette.muted)
             }
         }
         .chartYAxis {
