@@ -1,4 +1,5 @@
-import ActivityKit
+// The iOS 26 SDK leaves Activity's async methods unannotated. This class owns the handles on MainActor.
+@preconcurrency import ActivityKit
 import CarGaugeCore
 import Foundation
 import WidgetKit

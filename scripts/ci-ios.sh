@@ -13,6 +13,7 @@ derived="$output/DerivedData"
 
 {
   xcodebuild -version
+  python3 scripts/validate_project.py
   xcodegen generate --spec project.yml
 } 2>&1 | tee "$output/CarGauge-Setup.log"
 

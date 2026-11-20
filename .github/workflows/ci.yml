@@ -33,7 +33,6 @@ jobs:
           {
             swift test
             swift run cargauge-simulator overheat
-            python3 scripts/validate_project.py
           } 2>&1 | tee .artifacts/core/CarGauge-Core.log
       - name: Upload core diagnostics
         if: ${{ !cancelled() }}

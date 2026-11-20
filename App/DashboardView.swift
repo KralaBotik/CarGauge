@@ -31,7 +31,7 @@ struct DashboardView: View {
             Text("Hyundai Elantra HD · G4FC")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Picker("Источник", selection: Binding(get: { model.source }, set: model.switchSource(to:))) {
+            Picker("Источник", selection: Binding(get: { model.source }, set: { model.switchSource(to: $0) })) {
                 Text("Симулятор").tag(DataSource.simulator)
                 Text("Автомобиль").tag(DataSource.vehicle)
             }
@@ -167,7 +167,7 @@ struct DashboardView: View {
                 LabeledContent("Источник данных") {
                     Text("Симулятор OBD-II").accessibilityIdentifier("simulator-source")
                 }
-                Picker("Сценарий", selection: Binding(get: { model.scenario }, set: model.setScenario(_:))) {
+                Picker("Сценарий", selection: Binding(get: { model.scenario }, set: { model.setScenario($0) })) {
                     Text("Прогрев").tag(SimulationScenario.warmup)
                     Text("Перегрев").tag(SimulationScenario.overheat)
                     Text("Напряжение через ATRV").tag(SimulationScenario.noVoltagePID)
