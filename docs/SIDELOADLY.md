@@ -1,0 +1,31 @@
+# Установка CarGauge на iPhone через Sideloadly на Windows
+
+Для первой установки возьмите **CarGauge Basic**. Он включает тот же интерфейс, симулятор OBD-II и CoreBluetooth, что основной вариант.
+
+| Артефакт GitHub Actions | Файл внутри ZIP | Bundle ID до подписи | Что проверять |
+| --- | --- | --- | --- |
+| `CarGauge-basic-IPA` | `CarGauge-Basic-unsigned.ipa` | `com.cargauge.prototype.basic` | Интерфейс, симулятор, подключение к Vgate. Без расширения и App Groups. |
+| `CarGauge-full-IPA` | `CarGauge-Full-unsigned.ipa` | `com.cargauge.prototype` и `com.cargauge.prototype.widgets` | Приложение, WidgetKit и Live Activity. Полный тест виджета требует подписанных App Groups. |
+
+Оба IPA содержат arm64-сборки для iPhone с iOS 18.0 или новее. GitHub Actions выпускает IPA после тестов и проверки структуры. Sideloadly подписывает IPA на Windows. iOS 27.2 beta и конкретный iPhone проверяются отдельно.
+
+1. Откройте [успешные запуски CI на main](https://github.com/KralaBotik/CarGauge/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess), выберите свежий запуск с `CarGauge-basic-IPA` и скачайте его из **Artifacts**. Войдите в GitHub, если он запросит авторизацию. Распакуйте внешний ZIP. Внутри будут `.ipa` и файл `.ipa.sha256`. Для проверки в PowerShell выполните `Get-FileHash .\CarGauge-Basic-unsigned.ipa -Algorithm SHA256` и сравните хеш с прилагаемым файлом.
+2. Установите [Sideloadly с официального сайта](https://sideloadly.io/) и веб-версии iTunes и iCloud по ссылкам в разделе **Before you install**. Для Sideloadly нужны веб-версии, а установленные версии из Microsoft Store следует предварительно удалить.
+3. Подключите разблокированный iPhone кабелем USB. Подтвердите **Доверять этому компьютеру** и проверьте, что iPhone виден в iTunes и Sideloadly.
+4. Перетащите `CarGauge-Basic-unsigned.ipa` в Sideloadly и выберите iPhone. Используйте режим **Apple ID Sideload** и локальный Anisette или iTunes Anisette, если приложение предлагает выбор. Оставьте настройки bundle ID по умолчанию. Нажмите **Start**. Введите Apple ID, пароль и код 2FA только в локальных окнах Sideloadly и Apple. Не добавляйте эти данные в GitHub, CI или отчёты об ошибках.
+5. На iPhone включите **Настройки → Конфиденциальность и безопасность → Режим разработчика**. Перезагрузите телефон и подтвердите включение. Если пункта пока нет, выполните подключение и установку, затем проверьте настройки снова. Если iOS сообщает о недоверенном разработчике, откройте **Настройки → Основные → VPN и управление устройством**, выберите профиль своего Apple ID и подтвердите доверие. Откройте **CarGauge Basic**. [Developer Mode у Apple](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device), [FAQ Sideloadly](https://sideloadly.io/faq).
+6. Бесплатный профиль действует **7 дней**. Для обновления используйте тот же Apple ID и те же настройки bundle ID. Если понадобится лог Sideloadly, включите скрытие чувствительных данных и проверьте, что в нём нет Apple ID, UDID и персональных путей. [Ограничения Apple Personal Team](https://developer.apple.com/help/account/basics/about-your-developer-account/), [FAQ Sideloadly](https://sideloadly.io/faq).
+
+## Первые тесты на iPhone
+
+1. Запустите приложение без адаптера. Должен открыться **Симулятор**. Дождитесь показаний температуры PID `0105`, оборотов, напряжения и графика. Температура должна расти, напряжение в режиме **Прогрев** должно показывать источник **ECU · 0142**.
+2. Выберите **Перегрев**. Дождитесь предупреждения о высокой, а затем критической температуре при пересечении порогов 105 и 115 °C. Реальный двигатель для этого теста не нужен.
+3. Выберите **Напряжение через ATRV**. Проверьте `14,1 В` и источник **Адаптер · ATRV**.
+4. Выберите **Обрыв связи**. После первых показаний температура должна смениться на `—`. Вернитесь в режим прогрева. Если измерение остановилось, нажмите **Начать измерение**, затем проверьте ручную остановку и повторный запуск.
+5. Для первого BLE-теста подключите Vgate iCar Pro BLE 4.0 на стоящем автомобиле и включите зажигание. Переключитесь на **Автомобиль**, разрешите Bluetooth и нажмите **Найти Vgate по Bluetooth**. Выберите свой адаптер, дождитесь PID `0105` и проверьте реакцию на выключение Bluetooth. Для автоподключения включите соответствующий переключатель, дождитесь соединения и проверьте повторный запуск приложения. Успех симулятора сам по себе не подтверждает работу CoreBluetooth.
+
+## Полный IPA и App Groups
+
+Apple указывает App Groups как доступную возможность для бесплатных разработчиков. Для CarGauge требуется одна группа `group.com.cargauge.prototype`, разрешённая профилями приложения и расширения. При изменении bundle ID подписывающий инструмент должен сохранить согласованность ID расширения, значения `CarGaugeAppGroup` в обоих plist и группы в entitlements. Конфигурация для полной сборки находится в `Config/App.entitlements` и `Config/Widget.entitlements`.
+
+Обычная подпись Sideloadly с бесплатным аккаунтом не подтверждена для этой пары приложения и виджета. Sideloadly относит ручную настройку entitlements к Apple Developer Program и Patreon. Даже если полный IPA установится и откроется, это не подтверждает доступ WidgetKit к общему контейнеру. Для тестирования виджета и Live Activity нужен отдельный запуск с сохранёнными профилями и App Groups. [Матрица Apple](https://developer.apple.com/help/account/reference/supported-capabilities-ios/), [журнал Sideloadly](https://sideloadly.io/changelog.html).

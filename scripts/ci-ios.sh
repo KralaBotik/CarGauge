@@ -7,6 +7,13 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
+flavor="${1:-full}"
+case "$flavor" in
+  full) scheme=CarGauge; ipa=CarGauge-Full-unsigned.ipa ;;
+  basic) scheme=CarGaugeBasic; ipa=CarGauge-Basic-unsigned.ipa ;;
+  *) echo "Usage: scripts/ci-ios.sh [full|basic]" >&2; exit 2 ;;
+esac
+
 mkdir -p .artifacts
 output="$(mktemp -d "$PWD/.artifacts/ios.XXXXXX")"
 derived="$output/DerivedData"
@@ -19,7 +26,7 @@ derived="$output/DerivedData"
 
 status=0
 if simulator="$(xcrun simctl list devices available --json | python3 scripts/select_simulator.py)"; then
-  if ! xcodebuild -project CarGauge.xcodeproj -scheme CarGauge \
+  if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
     -destination "platform=iOS Simulator,id=$simulator" \
     -derivedDataPath "$derived" -parallel-testing-enabled NO \
     -resultBundlePath "$output/CarGauge-UI.xcresult" test \
@@ -30,13 +37,15 @@ else
   status=1
 fi
 
-if xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
+if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath "$derived" \
   -resultBundlePath "$output/CarGauge-Device.xcresult" CODE_SIGNING_ALLOWED=NO build \
   2>&1 | tee "$output/CarGauge-Device.log"; then
-  app="$derived/Build/Products/Release-iphoneos/CarGauge.app"
-  python3 scripts/validate_project.py "$app" 2>&1 | tee -a "$output/CarGauge-Device.log"
-  ditto -c -k --keepParent "$app" "$output/CarGauge-unsigned.zip"
+  if [[ "$status" -eq 0 ]]; then
+    app="$derived/Build/Products/Release-iphoneos/$scheme.app"
+    python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
+      2>&1 | tee -a "$output/CarGauge-Device.log"
+  fi
 else
   status=1
 fi

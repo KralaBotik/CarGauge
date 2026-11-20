@@ -44,8 +44,14 @@ jobs:
           retention-days: 14
 
   ios:
+    name: iOS (${{ matrix.flavor }})
+    needs: core
     runs-on: macos-26
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [full, basic]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       CARGAUGE_IOS_RUNTIME: ${{ inputs.runtime }}
@@ -60,12 +66,12 @@ jobs:
           fi
           xcodegen --version
       - name: Test on an iPhone simulator and build for iPhone
-        run: scripts/ci-ios.sh
+        run: scripts/ci-ios.sh ${{ matrix.flavor }}
       - name: Upload iOS diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: CarGauge-iOS-diagnostics
+          name: CarGauge-iOS-${{ matrix.flavor }}-diagnostics
           path: |
             .artifacts/ios.*/*.log
             .artifacts/ios.*/CarGauge-UI.xcresult
@@ -73,12 +79,15 @@ jobs:
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
-      - name: Upload validated iPhone build
+      - name: Upload validated unsigned IPA and checksum
         if: ${{ success() && github.ref == 'refs/heads/main' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: CarGauge-iPhone-unsigned
-          path: .artifacts/ios.*/CarGauge-unsigned.zip
+          name: CarGauge-${{ matrix.flavor }}-IPA
+          path: |
+            .artifacts/ios.*/*.ipa
+            .artifacts/ios.*/*.ipa.sha256
           include-hidden-files: true
+          compression-level: 0
           retention-days: 14
           if-no-files-found: error

@@ -11,6 +11,13 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: 10))
         XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: 10))
 
+        let liveActivityButton = app.buttons["live-activity-button"]
+        #if CARGAUGE_BASIC
+        XCTAssertFalse(liveActivityButton.exists)
+        #else
+        XCTAssertTrue(liveActivityButton.waitForExistence(timeout: 5))
+        #endif
+
         let stop = app.buttons["stop-measurement"]
         for _ in 0..<4 where !stop.isHittable { app.swipeUp() }
         XCTAssertTrue(stop.isHittable)

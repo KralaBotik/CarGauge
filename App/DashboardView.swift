@@ -76,13 +76,16 @@ struct DashboardView: View {
                        detail: voltage == nil ? "Нет данных" : (model.supplementary?.voltageSource == .adapter ? "Адаптер · ATRV" : "ECU · 0142"),
                        id: "voltage-value")
             }
+            #if !CARGAUGE_BASIC
             if model.activityIsRunning || isActive {
                 Button(model.activityIsRunning ? "Завершить Live Activity" : "Начать Live Activity") {
                     model.toggleActivity()
                 }
                 .buttonStyle(.bordered)
                 .disabled(!model.activityIsRunning && reading == nil)
+                .accessibilityIdentifier("live-activity-button")
             }
+            #endif
             if let message = model.presentationMessage {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
             }

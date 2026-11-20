@@ -2,6 +2,7 @@
 .swiftpm/
 .tools/
 .artifacts/
+__pycache__/
 DerivedData/
 *.xcodeproj/
 *.xcworkspace/
@@ -15,6 +16,7 @@ DerivedData/
 *.pem
 *.key
 *.mobileprovision
+*.provisionprofile
 *.ipa
 .env
 .env.*

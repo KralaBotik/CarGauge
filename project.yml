@@ -48,6 +48,23 @@ targets:
     dependencies:
       - package: CarGaugePackage
         product: CarGaugeCore
+  CarGaugeBasic:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+        excludes: [PrivacyInfo.xcprivacy, TelemetryPresentation.swift]
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Basic
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(CARGAUGE_BUNDLE_ID).basic
+        INFOPLIST_FILE: Config/Basic-Info.plist
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CARGAUGE_BASIC"
+    dependencies:
+      - package: CarGaugePackage
+        product: CarGaugeCore
   CarGaugeUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -59,6 +76,18 @@ targets:
         TEST_TARGET_NAME: CarGauge
     dependencies:
       - target: CarGauge
+  CarGaugeBasicUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(CARGAUGE_BUNDLE_ID).basic.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: CarGaugeBasic
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CARGAUGE_BASIC"
+    dependencies:
+      - target: CarGaugeBasic
 schemes:
   CarGauge:
     build:
@@ -68,3 +97,11 @@ schemes:
     test:
       config: Debug
       targets: [CarGaugeUITests]
+  CarGaugeBasic:
+    build:
+      targets:
+        CarGaugeBasic: all
+        CarGaugeBasicUITests: [test]
+    test:
+      config: Debug
+      targets: [CarGaugeBasicUITests]
