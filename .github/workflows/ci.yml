@@ -1,0 +1,58 @@
+name: CarGauge CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: "Installed iOS runtime (e.g. iOS-26-5). Empty selects an available iPhone."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cargauge-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    container: swift:6.2.3-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test Swift core
+        run: swift test
+      - name: Run a simulated drive
+        run: swift run cargauge-simulator overheat
+      - name: Check iOS project configuration
+        run: python3 scripts/validate_project.py
+
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      CARGAUGE_IOS_RUNTIME: ${{ inputs.runtime }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+      - name: Test on an iPhone simulator and build for iPhone
+        run: scripts/ci-ios.sh
+      - name: Upload iOS build and test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarGauge-iOS
+          path: |
+            .artifacts/ios.*/CarGauge-unsigned.zip
+            .artifacts/ios.*/CarGauge-UI.xcresult
+          include-hidden-files: true
+          if-no-files-found: warn
