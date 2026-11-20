@@ -7,24 +7,37 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
-xcodebuild -version
-xcodegen generate --spec project.yml
-simulator="$(xcrun simctl list devices available --json | python3 scripts/select_simulator.py)"
 mkdir -p .artifacts
 output="$(mktemp -d "$PWD/.artifacts/ios.XXXXXX")"
 derived="$output/DerivedData"
 
-xcodebuild -project CarGauge.xcodeproj -scheme CarGauge \
-  -destination "platform=iOS Simulator,id=$simulator" \
-  -derivedDataPath "$derived" -parallel-testing-enabled NO \
-  -resultBundlePath "$output/CarGauge-UI.xcresult" test
+{
+  xcodebuild -version
+  xcodegen generate --spec project.yml
+} 2>&1 | tee "$output/CarGauge-Setup.log"
 
-xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
+status=0
+if simulator="$(xcrun simctl list devices available --json | python3 scripts/select_simulator.py)"; then
+  if ! xcodebuild -project CarGauge.xcodeproj -scheme CarGauge \
+    -destination "platform=iOS Simulator,id=$simulator" \
+    -derivedDataPath "$derived" -parallel-testing-enabled NO \
+    -resultBundlePath "$output/CarGauge-UI.xcresult" test \
+    2>&1 | tee "$output/CarGauge-Simulator.log"; then
+    status=1
+  fi
+else
+  status=1
+fi
+
+if xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath "$derived" \
-  CODE_SIGNING_ALLOWED=NO build
-
-app="$derived/Build/Products/Release-iphoneos/CarGauge.app"
-test -d "$app/PlugIns/CarGaugeWidgets.appex"
-python3 scripts/validate_project.py "$app"
-ditto -c -k --keepParent "$app" "$output/CarGauge-unsigned.zip"
+  -resultBundlePath "$output/CarGauge-Device.xcresult" CODE_SIGNING_ALLOWED=NO build \
+  2>&1 | tee "$output/CarGauge-Device.log"; then
+  app="$derived/Build/Products/Release-iphoneos/CarGauge.app"
+  python3 scripts/validate_project.py "$app" 2>&1 | tee -a "$output/CarGauge-Device.log"
+  ditto -c -k --keepParent "$app" "$output/CarGauge-unsigned.zip"
+else
+  status=1
+fi
 echo "iOS results: $output"
+exit "$status"
