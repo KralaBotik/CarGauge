@@ -19,11 +19,11 @@ struct TemperatureInstrument: View {
                     digits
                 } else {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: GaugeSpacing.medium) {
+                        HStack(spacing: 0) {
                             digits.fixedSize(horizontal: true, vertical: false)
-                            Spacer(minLength: 0)
+                            Spacer(minLength: GaugeSpacing.small)
                             InstrumentSweep(value: value, thresholds: thresholds, tone: tone)
-                                .frame(width: 128, height: 98)
+                                .frame(width: 120, height: 98)
                                 .accessibilityHidden(true)
                         }
                         digits
