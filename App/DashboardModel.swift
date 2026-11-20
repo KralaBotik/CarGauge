@@ -77,8 +77,8 @@ import UserNotifications
             status = "Сначала выберите BLE-адаптер"
             return
         }
-        // BLE instances are single-use. A retry cannot receive callbacks from the previous link.
-        if source == .vehicle { ble = BLETransport() }
+        // Reuse the discovery manager on first connection. Replace a closed link before retrying.
+        if source == .vehicle && ble.isClosed { ble = BLETransport() }
         let id = runID
         let currentSource = source
         let currentScenario = scenario
@@ -124,7 +124,10 @@ import UserNotifications
         }
     }
 
-    func refreshActivityState() { activityIsRunning = presentation.hasActivity }
+    func refreshActivityState() {
+        let running = presentation.hasActivity
+        if activityIsRunning != running { activityIsRunning = running }
+    }
 
     func requestWarningNotifications() async {
         do {
@@ -163,6 +166,7 @@ import UserNotifications
                     accept(reading, source: source)
                     await presentation.publish(coolant: reading, source: source, level: level)
                     try Task.checkCancellation()
+                    refreshActivityState()
                     let snapshot = try await client.readSupplementary(source: source, coolant: reading)
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot

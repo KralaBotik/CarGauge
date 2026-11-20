@@ -28,10 +28,12 @@ struct BLEDevice: Identifiable {
     @Published private(set) var diagnostic = "Адаптер не выбран"
     @Published private(set) var selectedID: UUID?
     private var manager: CBCentralManager?
+    private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
     private var peripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?
     private var profile: Profile?
+    private var remainingProfiles: [(profile: Profile, service: CBService)] = []
     private var connectWaiter: CheckedContinuation<Void, Error>?
     private var responseWaiter: CheckedContinuation<String, Error>?
     private var deadline: Task<Void, Never>?
@@ -43,6 +45,7 @@ struct BLEDevice: Identifiable {
     private var discovering = false
     private var ready = false
     private var closed = false
+    var isClosed: Bool { closed }
 
     override init() {
         selectedID = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
@@ -63,6 +66,7 @@ struct BLEDevice: Identifiable {
     func discover() {
         guard !closed, connectWaiter == nil, !ready else { return }
         devices = []
+        discoveredPeripherals.removeAll()
         discovering = true
         diagnostic = "Поиск BLE-адаптеров…"
         ensureManager()
@@ -130,8 +134,10 @@ struct BLEDevice: Identifiable {
         guard connectWaiter != nil, peripheral == nil, let manager, let selectedID else { return }
         switch manager.state {
         case .poweredOn:
-            if let saved = manager.retrievePeripherals(withIdentifiers: [selectedID]).first { attach(saved) }
-            else {
+            if let saved = discoveredPeripherals[selectedID]
+                ?? manager.retrievePeripherals(withIdentifiers: [selectedID]).first {
+                attach(saved)
+            } else {
                 diagnostic = "Поиск сохранённого адаптера…"
                 // Service-filtered scans can operate in the background, subject to iOS limits.
                 manager.scanForPeripherals(withServices: Self.profiles.map(\.service), options: nil)
@@ -195,7 +201,9 @@ struct BLEDevice: Identifiable {
             manager?.cancelPeripheralConnection(peripheral)
         }
         manager?.delegate = nil
+        discoveredPeripherals.removeAll()
         peripheral = nil
+        remainingProfiles.removeAll()
         pendingWrite = nil
         waitingForWriteAck = false
         completedResponse = nil
@@ -209,6 +217,18 @@ struct BLEDevice: Identifiable {
         diagnostic = error.localizedDescription
         connection?.resume(throwing: error)
         response?.resume(throwing: error)
+    }
+
+    private func discoverNextProfile(on device: CBPeripheral) {
+        guard !remainingProfiles.isEmpty else {
+            fail(OBDError.adapter("Поддерживаемый GATT-профиль не найден"))
+            return
+        }
+        let (candidate, service) = remainingProfiles.removeFirst()
+        profile = candidate
+        writeCharacteristic = nil
+        notifyCharacteristic = nil
+        device.discoverCharacteristics(Array(Set([candidate.notify, candidate.write])), for: service)
     }
 }
 
@@ -233,7 +253,8 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
         let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         let likelyOBD = ["vlink", "v-link", "vgate", "icar", "obd"].contains { name.lowercased().contains($0) }
         guard likelyOBD || Self.profiles.contains(where: { services.contains($0.service) }) else { return }
-        if !devices.contains(where: { $0.id == device.identifier }) {
+        if discoveredPeripherals[device.identifier] == nil {
+            discoveredPeripherals[device.identifier] = device
             devices.append(BLEDevice(id: device.identifier, name: name, rssi: RSSI.intValue))
         }
     }
@@ -258,23 +279,21 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
     func peripheral(_ device: CBPeripheral, didDiscoverServices error: Error?) {
         guard device === peripheral, !closed else { return }
         if let error { fail(error); return }
-        guard let match = Self.profiles.first(where: { candidate in
-            device.services?.contains(where: { $0.uuid == candidate.service }) == true
-        }), let service = device.services?.first(where: { $0.uuid == match.service }) else {
-            fail(OBDError.adapter("Поддерживаемый GATT-профиль не найден")); return
+        remainingProfiles = Self.profiles.compactMap { candidate in
+            guard let service = device.services?.first(where: { $0.uuid == candidate.service }) else { return nil }
+            return (profile: candidate, service: service)
         }
-        profile = match
-        device.discoverCharacteristics(Array(Set([match.notify, match.write])), for: service)
+        discoverNextProfile(on: device)
     }
 
     func peripheral(_ device: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        guard device === peripheral, !closed, let profile else { return }
-        if let error { fail(error); return }
-        guard let tx = service.characteristics?.first(where: { $0.uuid == profile.write }),
+        guard device === peripheral, !closed, let profile, service.uuid == profile.service else { return }
+        guard error == nil, let tx = service.characteristics?.first(where: { $0.uuid == profile.write }),
               let rx = service.characteristics?.first(where: { $0.uuid == profile.notify }),
               !tx.properties.intersection([.write, .writeWithoutResponse]).isEmpty,
               !rx.properties.intersection([.notify, .indicate]).isEmpty else {
-            fail(OBDError.adapter("Неподходящие BLE-характеристики")); return
+            discoverNextProfile(on: device)
+            return
         }
         writeCharacteristic = tx
         notifyCharacteristic = rx
@@ -283,14 +302,17 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
 
     func peripheral(_ device: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         guard device === peripheral, characteristic === notifyCharacteristic, !closed else { return }
-        if let error { fail(error); return }
-        guard characteristic.isNotifying else { fail(OBDError.disconnected); return }
+        guard error == nil, characteristic.isNotifying else {
+            if ready { fail(error ?? OBDError.disconnected) }
+            else { discoverNextProfile(on: device) }
+            return
+        }
+        guard !ready, let continuation = connectWaiter else { return }
         ready = true
         deadline?.cancel()
         diagnostic = "BLE готов: \(profile?.service.uuidString ?? "")"
-        let continuation = connectWaiter
         connectWaiter = nil
-        continuation?.resume()
+        continuation.resume()
     }
 
     func peripheral(_ device: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
