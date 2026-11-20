@@ -42,6 +42,7 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
     status=1
   fi
   if [[ -d "$output/CarGauge-UI.xcresult" ]]; then
+    mkdir -p "$output/screenshots"
     xcrun xcresulttool export attachments --path "$output/CarGauge-UI.xcresult" \
       --output-path "$output/screenshots" || echo "Screenshots are available in the xcresult bundle."
   fi

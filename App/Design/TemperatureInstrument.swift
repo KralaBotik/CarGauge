@@ -94,8 +94,8 @@ private struct InstrumentSweep: View {
 
     var body: some View {
         Canvas { context, size in
-            let center = CGPoint(x: size.width / 2, y: size.height * 0.66)
-            let radius = min(size.width / 2 - 8, size.height * 0.61)
+            let center = CGPoint(x: size.width / 2, y: size.height * 0.60)
+            let radius = min(size.width / 2 - 8, size.height * 0.56)
             let position = value.map { fraction($0) }
 
             context.stroke(arc(at: center, radius: radius, through: 1), with: .color(palette.line),

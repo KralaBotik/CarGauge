@@ -39,6 +39,7 @@ struct WarmupChart: View {
         let low = floor((temperatures.min() ?? 0) / 10) * 10
         let high = max(low + 20, ceil((temperatures.max() ?? 0) / 10) * 10 + 2)
         let singletons = Set(Dictionary(grouping: visible, by: \.segment).values.filter { $0.count == 1 }.compactMap { $0.first?.id })
+        let timeFormat = compact ? Date.FormatStyle.dateTime.minute().second() : Date.FormatStyle.dateTime.hour().minute()
 
         return Chart {
             ForEach(visible) { point in
@@ -69,7 +70,7 @@ struct WarmupChart: View {
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: compact ? 3 : 4)) {
                 AxisGridLine().foregroundStyle(palette.line.opacity(0.55))
-                AxisValueLabel(format: .dateTime.minute().second()).foregroundStyle(palette.muted)
+                AxisValueLabel(format: timeFormat).foregroundStyle(palette.muted)
             }
         }
         .chartYAxis {
