@@ -16,7 +16,7 @@ struct TemperatureInstrument: View {
         GaugePanel(instrument: true, inset: GaugeSpacing.large) {
             VStack(alignment: .leading, spacing: GaugeSpacing.small) {
                 GaugeCaption(title: "ТЕМПЕРАТУРА ОЖ", symbol: "thermometer.medium")
-                if typeSize.isAccessibilityCategory {
+                if typeSize.isAccessibilitySize {
                     digits
                 } else {
                     ViewThatFits(in: .horizontal) {
@@ -73,6 +73,10 @@ struct TemperatureInstrument: View {
         case .operating: ("Рабочая температура", "checkmark.circle", palette.operating, "temperature-state")
         case .warning: ("Высокая температура", "exclamationmark.triangle", palette.warning, "overheat-warning")
         case .critical: ("Перегрев", "exclamationmark.triangle.fill", palette.critical, "overheat-critical")
+        case nil where alert == .critical:
+            ("Нет данных · ранее перегрев", "exclamationmark.triangle.fill", palette.critical, "stale-temperature-alert")
+        case nil where alert == .warning:
+            ("Нет данных · ранее высокая температура", "exclamationmark.triangle", palette.warning, "stale-temperature-alert")
         case nil:
             switch phase {
             case .connecting: ("Подключение…", "dot.radiowaves.left.and.right", palette.accent, "connection-status")

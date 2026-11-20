@@ -40,7 +40,7 @@ struct DashboardView: View {
                         .buttonStyle(GaugeActionStyle())
                         .accessibilityLabel("Открыть историю")
                     }
-                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: true)
+                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: true, alert: model.level)
                         .accessibilityIdentifier("warmup-plot")
                 }
             }
@@ -65,7 +65,7 @@ struct DashboardView: View {
     }
 
     private var sourceSwitch: some View {
-        let layout = typeSize.isAccessibilityCategory ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
         return layout {
             sourceButton(.simulator, label: "Симулятор", symbol: "flask")
             sourceButton(.vehicle, label: "Автомобиль", symbol: "car.side")
@@ -98,7 +98,7 @@ struct DashboardView: View {
         let rpmLabel = rpm.map { String(Int($0.rounded())) } ?? "—"
         let voltageLabel = voltage.map { "\($0.formatted(.number.precision(.fractionLength(1)))) В" } ?? "—"
         let voltageDetail = voltage == nil ? "Нет данных" : (model.supplementary?.voltageSource == .adapter ? "По адаптеру" : "Блок управления")
-        let layout = typeSize.isAccessibilityCategory
+        let layout = typeSize.isAccessibilitySize
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.medium))
             : AnyLayout(HStackLayout(alignment: .top, spacing: GaugeSpacing.large))
 
@@ -107,8 +107,8 @@ struct DashboardView: View {
                 GaugeMetric(title: "ОБОРОТЫ", symbol: "gauge.with.dots.needle.33percent",
                             value: rpmLabel, detail: "об/мин", id: "rpm-value")
                 Rectangle().fill(palette.line)
-                    .frame(width: typeSize.isAccessibilityCategory ? nil : 1,
-                           height: typeSize.isAccessibilityCategory ? 1 : 69)
+                    .frame(width: typeSize.isAccessibilitySize ? nil : 1,
+                           height: typeSize.isAccessibilitySize ? 1 : 69)
                     .accessibilityHidden(true)
                 GaugeMetric(title: "НАПРЯЖЕНИЕ", symbol: "bolt",
                             value: voltageLabel, detail: voltageDetail, id: "voltage-value")

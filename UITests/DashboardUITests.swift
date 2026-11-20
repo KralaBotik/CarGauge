@@ -17,7 +17,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertLessThanOrEqual(chart.frame.maxY, app.tabBars.firstMatch.frame.minY + 1)
         XCTAssertLessThan(temperature.frame.minY, rpm.frame.minY)
         XCTAssertLessThan(rpm.frame.minY, chart.frame.minY)
-        XCTAssertFalse(app.staticTexts["PID 0105"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["coolant-pid"].firstMatch.exists)
         snapshot(app, named: "Dashboard-Dark")
 
         let stop = app.buttons["stop-measurement"]
@@ -36,7 +36,7 @@ final class DashboardUITests: XCTestCase {
         app.tabBars.buttons["История"].tap()
         XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Диагностика"].tap()
-        XCTAssertTrue(app.staticTexts["PID 0105"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["coolant-pid"].firstMatch.waitForExistence(timeout: 5))
         app.tabBars.buttons["Настройки"].tap()
         XCTAssertTrue(app.staticTexts["Температурные пороги"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Оформление"].exists)

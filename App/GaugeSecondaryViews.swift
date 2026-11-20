@@ -13,7 +13,7 @@ struct GaugeHistoryView: View {
                 VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
                     Text("Температура за сеанс").font(.headline)
                     Text("До 30 минут · пропуски видны на графике").font(.caption).foregroundStyle(palette.muted)
-                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: false)
+                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: false, alert: model.level)
                 }
             }
             if let first = model.history.first, let last = model.history.last {
@@ -63,6 +63,7 @@ struct GaugeDiagnosticsView: View {
                 VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
                     Text("Параметры OBD-II").font(.headline)
                     LabeledContent("Температура ОЖ", value: "PID 0105")
+                        .accessibilityIdentifier("coolant-pid")
                     LabeledContent("Обороты", value: "PID 010C")
                     LabeledContent("Напряжение", value: voltageSource)
                 }

@@ -9,6 +9,7 @@ struct WarmupChart: View {
     let points: [WarmupHistory.Point]
     let thresholds: ThermalThresholds
     let compact: Bool
+    var alert: ThermalLevel = .normal
 
     var body: some View {
         Group {
@@ -53,7 +54,7 @@ struct WarmupChart: View {
                     PointMark(x: .value("Время", point.reading.timestamp),
                               y: .value("Температура, °C", point.reading.value))
                         .foregroundStyle(point.id == latest.id
-                                         ? palette.tone(for: thresholds.state(at: point.reading.value, alert: .normal))
+                                         ? palette.tone(for: thresholds.state(at: point.reading.value, alert: alert))
                                          : palette.trace)
                         .symbolSize(28)
                         .accessibilityHidden(point.id == latest.id && !singletons.contains(point.id))
