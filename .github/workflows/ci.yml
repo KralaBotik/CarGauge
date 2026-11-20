@@ -46,16 +46,12 @@ jobs:
   ios:
     name: iOS (${{ matrix.flavor }})
     needs: core
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-26
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - flavor: full
-            runner: macos-26-intel
-          - flavor: basic
-            runner: macos-26
+        flavor: [full, basic]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       CARGAUGE_IOS_RUNTIME: ${{ inputs.runtime }}
