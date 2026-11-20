@@ -9,3 +9,11 @@
 [Успешный запуск CI](https://github.com/KralaBotik/CarGauge/actions/runs/44766826931) проверил коммит `bc900bb96c4ed660643bf2088ac36038991f7e05`. На Linux успешно прошли 12 Swift-тестов и сценарий перегрева. На macOS с Xcode 26.6 прошли 3 XCTest на iPhone Simulator с iOS 26.5 и Release-сборка для iPhone. Скачанный архив `CarGauge-iPhone-unsigned` прошёл проверку структуры и plist. Внутри подтверждены arm64-исполняемые файлы приложения и `CarGaugeWidgets.appex`, которое включает Live Activity. Логи и `.xcresult` доступны в артефактах запуска.
 
 На оборудовании остаётся подтвердить поддержку PID и GATT-профиль, поведение после сна адаптера и при блокировке iPhone, а также отображение виджета и Live Activity на Linux-магнитоле. Пороги предупреждений выбраны для прототипа. Снимок WidgetKit обновляется в пределах бюджета системы, а Live Activity зависит от выполнения приложения.
+
+## IPA для установки с Windows
+
+[CI для `872ef490cf06c0ecab1b525c545fea1919fb7fd2`](https://github.com/KralaBotik/CarGauge/actions/runs/44770519336) завершился успешно. Прошли 12 тестов ядра и по 3 XCTest для Full и Basic. XCTest проверяет наличие кнопки Live Activity только в Full. Release обоих вариантов собран без подписи разработчика.
+
+Скачанные IPA прошли повторную сверку SHA-256 и проверку бинарников arm64, структуры `Payload`, bundle ID, Info.plist и минимума iOS 18.0. Full содержит `CarGaugeWidgets.appex` с WidgetKit и Live Activity. У Basic нет расширения, настроек App Groups и зависимостей от WidgetKit или ActivityKit. В архивы не включены профили и сертификаты. Локально валидатор также отклонил подложенный профиль и Full IPA, переданный как Basic.
+
+Подписание через Sideloadly и установка на физический iPhone остаются проверкой по [инструкции для Windows](SIDELOADLY.md). Совместимость App Groups в бесплатном режиме Sideloadly для полного варианта не подтверждена.
