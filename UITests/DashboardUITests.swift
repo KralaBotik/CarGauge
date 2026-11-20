@@ -25,7 +25,8 @@ final class DashboardUITests: XCTestCase {
         stop.tap()
         XCTAssertTrue(temperature.wait(for: \.label, toEqual: "—", timeout: 5))
         app.tabBars.buttons["История"].tap()
-        XCTAssertTrue(app.staticTexts["Последний замер"].waitForExistence(timeout: 5))
+        let lastReading = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Последний замер,")).firstMatch
+        XCTAssertTrue(lastReading.waitForExistence(timeout: 5))
     }
 
     @MainActor func testLightDashboardAndTabs() {
@@ -36,7 +37,8 @@ final class DashboardUITests: XCTestCase {
         app.tabBars.buttons["История"].tap()
         XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Диагностика"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["coolant-pid"].firstMatch.waitForExistence(timeout: 5))
+        let coolantPID = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
+        XCTAssertTrue(coolantPID.waitForExistence(timeout: 5))
         app.tabBars.buttons["Настройки"].tap()
         XCTAssertTrue(app.staticTexts["Температурные пороги"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Оформление"].exists)
@@ -57,9 +59,9 @@ final class DashboardUITests: XCTestCase {
         let stepper = app.steppers["warning-threshold"]
         XCTAssertTrue(stepper.waitForExistence(timeout: 5))
         stepper.buttons.element(boundBy: 1).tap()
-        XCTAssertTrue(app.staticTexts["106 °C"].exists)
+        XCTAssertTrue(stepper.waitForTemperature(106))
         reset.tap()
-        XCTAssertTrue(app.staticTexts["105 °C"].exists)
+        XCTAssertTrue(stepper.waitForTemperature(105))
     }
 
     @MainActor func testSimulatorSurfacesOverheat() {
@@ -105,8 +107,18 @@ final class DashboardUITests: XCTestCase {
 }
 
 private extension XCUIElement {
+    @MainActor func waitForTemperature(_ degrees: Int) -> Bool {
+        let temperature = "\(degrees) °C"
+        let predicate = NSPredicate(format: "exists == YES AND (value == %@ OR label CONTAINS %@)", temperature, temperature)
+        return wait(for: predicate, timeout: 5)
+    }
+
     @MainActor func waitForLabel(matching pattern: String, timeout: TimeInterval) -> Bool {
         let predicate = NSPredicate(format: "exists == YES AND label MATCHES %@", pattern)
+        return wait(for: predicate, timeout: timeout)
+    }
+
+    @MainActor private func wait(for predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }

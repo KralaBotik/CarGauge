@@ -69,7 +69,6 @@ struct GaugeDiagnosticsView: View {
                 }
                 .font(.subheadline)
             }
-            .accessibilityIdentifier("diagnostic-pids")
         }
         .accessibilityIdentifier("diagnostics-screen")
     }
@@ -199,6 +198,8 @@ struct GaugeSettingsView: View {
                     .accessibilityIdentifier(id + "-value")
             }
         }
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(Text(verbatim: "\(model.thresholds[limit]) °C"))
         .accessibilityIdentifier(id)
     }
 }

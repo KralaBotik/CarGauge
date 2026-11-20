@@ -4,7 +4,6 @@ import SwiftUI
 struct TemperatureInstrument: View {
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var digitSize: CGFloat = 94
     let value: Double?
     let thresholds: ThermalThresholds
@@ -55,8 +54,6 @@ struct TemperatureInstrument: View {
             .foregroundStyle(tone)
             .lineLimit(1)
             .minimumScaleFactor(0.55)
-            .contentTransition(.numericText())
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: number)
             .accessibilityLabel(value == nil ? number : "\(number) °C")
             .accessibilityIdentifier("coolant-value")
     }
