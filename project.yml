@@ -9,8 +9,8 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
     CARGAUGE_BUNDLE_ID: com.cargauge.prototype
     CARGAUGE_APP_GROUP: group.$(CARGAUGE_BUNDLE_ID)
-    MARKETING_VERSION: "0.2.0"
-    CURRENT_PROJECT_VERSION: "2"
+    MARKETING_VERSION: "0.3.0"
+    CURRENT_PROJECT_VERSION: "3"
 packages:
   CarGaugePackage:
     path: .

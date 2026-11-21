@@ -66,6 +66,8 @@ public struct ELMPromptBuffer: Sendable {
     }
 
     public mutating func reset() { bytes.removeAll(keepingCapacity: true) }
+
+    public var hasPartialPayload: Bool { bytes.contains { ![0x09, 0x0A, 0x0D, 0x20].contains($0) } }
 }
 
 public enum OBDDecoder {

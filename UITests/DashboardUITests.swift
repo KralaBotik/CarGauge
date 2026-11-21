@@ -46,11 +46,14 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Температурные пороги"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Оформление"].exists)
         let liveActivityButton = app.buttons["live-activity-button"]
+        let automaticActivity = app.switches["auto-live-activity"]
         #if CARGAUGE_BASIC
         XCTAssertFalse(liveActivityButton.exists)
+        XCTAssertFalse(automaticActivity.exists)
         #else
         for _ in 0..<4 where !liveActivityButton.isHittable { app.swipeUp() }
         XCTAssertTrue(liveActivityButton.isHittable)
+        XCTAssertTrue(automaticActivity.exists)
         #endif
     }
 
@@ -89,6 +92,30 @@ final class DashboardUITests: XCTestCase {
         let voltage = app.staticTexts["voltage-value"]
         for _ in 0..<4 where !voltage.isHittable { app.swipeUp() }
         XCTAssertTrue(voltage.isHittable)
+    }
+
+    @MainActor func testRememberedAdapterUsesVehicleWithAutoConnectDisabled() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-selectedBLEPeripheral", "00000000-0000-0000-0000-000000000001",
+                               "-autoConnect", "NO"]
+        app.launch()
+        XCTAssertTrue(app.buttons["source-vehicle"].waitForExistence(timeout: simulatorResponseTimeout))
+        XCTAssertTrue(app.buttons["source-vehicle"].isSelected)
+        XCTAssertTrue(app.buttons["start-measurement"].exists)
+        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
+    }
+
+    @MainActor func testManualStopSurvivesReturnFromBackground() {
+        let app = launch("warmup", appearance: "dark")
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["stop-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
+        app.buttons["stop-measurement"].tap()
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["start-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
+        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
     }
 
     @MainActor private func launch(_ scenario: String, appearance: String, accessibilityText: Bool = false) -> XCUIApplication {

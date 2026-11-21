@@ -9,9 +9,8 @@ import SwiftUI
         WindowGroup {
             CarGaugeShell(model: model, appearance: $appearance, isActive: scenePhase == .active)
                 .preferredColorScheme(appearance.scheme)
-                .task { model.launch() }
-                .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { model.refreshActivityState() }
+                .onChange(of: scenePhase, initial: true) { _, phase in
+                    model.sceneChanged(active: phase == .active, background: phase == .background)
                 }
         }
     }

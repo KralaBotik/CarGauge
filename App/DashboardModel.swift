@@ -4,7 +4,7 @@ import Foundation
 import UserNotifications
 
 enum MeasurementPhase {
-    case idle, awaitingAdapter, connecting, streaming, retrying, failed, stopped
+    case idle, awaitingAdapter, connecting, streaming, retrying, failed, stopped, parked
 }
 
 @MainActor final class DashboardModel: ObservableObject {
@@ -20,9 +20,23 @@ enum MeasurementPhase {
     @Published private(set) var ble = BLETransport()
     @Published private(set) var activityIsRunning = false
     @Published var presentationMessage: String?
-    @Published var autoConnect = UserDefaults.standard.bool(forKey: "autoConnect") {
+    @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") as? Bool ?? true {
         didSet { UserDefaults.standard.set(autoConnect, forKey: "autoConnect") }
     }
+    #if !CARGAUGE_BASIC
+    @Published var autoLiveActivity = UserDefaults.standard.bool(forKey: "autoLiveActivity") {
+        didSet {
+            UserDefaults.standard.set(autoLiveActivity, forKey: "autoLiveActivity")
+            if !autoLiveActivity && activityWasAutomatic { endActivity() }
+            if autoLiveActivity {
+                manuallyEndedActivity = false
+                attemptedAutoActivity = false
+                startAutomaticActivityIfPossible()
+            }
+        }
+    }
+    var widgetContainerAvailable: Bool { presentation.groupIsAvailable }
+    #endif
     @Published var scenario: SimulationScenario
 
     private let presentation = TelemetryPresentation()
@@ -33,6 +47,13 @@ enum MeasurementPhase {
     private var monitor = OverheatMonitor()
     private var warmup = WarmupHistory()
     private var started = false
+    private var hasBeenActive = false
+    private var sceneIsActive = false
+    private var backgroundSince: ContinuousClock.Instant?
+    private var manuallyStopped = false
+    private var attemptedAutoActivity = false
+    private var manuallyEndedActivity = false
+    private var activityWasAutomatic = false
     private var allowsNotifications = false
     private static let thresholdsKey = "thermalThresholds"
 
@@ -49,31 +70,52 @@ enum MeasurementPhase {
         monitor.apply(thresholds)
     }
 
-    func launch() {
-        guard !started else { return }
-        started = true
-        presentation.cleanUpPreviousRun()
-        if launchScenario == nil, autoConnect, ble.selectedID != nil,
-           UserDefaults.standard.string(forKey: "lastSource") == DataSource.vehicle.rawValue {
-            switchSource(to: .vehicle)
-        } else {
-            start()
+    func sceneChanged(active: Bool, background: Bool) {
+        let enteringForeground = active && (!hasBeenActive || backgroundSince != nil)
+        if background, backgroundSince == nil { backgroundSince = .now }
+        if active {
+            hasBeenActive = true
+            backgroundSince = nil
         }
-        Task { await refreshNotificationPermission() }
+        sceneIsActive = active
+        presentation.isForeground = active
+        ble.allowsUnfilteredScan = active
+
+        if !started {
+            guard active else { return }
+            started = true
+            presentation.cleanUpPreviousRun()
+            source = VehicleSessionPolicy.initialSource(hasSavedAdapter: ble.selectedID != nil,
+                                                        launchesSimulator: launchScenario != nil)
+            if source == .simulator || autoConnect { start() }
+            else { showManualConnection() }
+            Task { await refreshNotificationPermission() }
+            return
+        }
+
+        guard enteringForeground else { return }
+        refreshActivityState()
+        if source == .vehicle, autoConnect, !manuallyStopped,
+           !isRunning || (phase == .streaming && coolant?.isFresh(at: Date()) != true) {
+            start(preservingHistory: true)
+        } else {
+            startAutomaticActivityIfPossible()
+        }
     }
 
     func switchSource(to newSource: DataSource) {
         guard source != newSource else { return }
-        stop()
+        stopSession()
+        manuallyStopped = false
         source = newSource
         resetHistory()
-        UserDefaults.standard.set(newSource.rawValue, forKey: "lastSource")
-        ble = BLETransport()
-        if newSource == .simulator || (autoConnect && ble.selectedID != nil) { start() }
-        else {
-            phase = ble.selectedID == nil ? .awaitingAdapter : .idle
-            status = "Выберите адаптер или подключитесь вручную"
-        }
+        if newSource == .simulator || (autoConnect && ble.selectedID != nil && sceneIsActive) { start() }
+        else { showManualConnection() }
+    }
+
+    private func showManualConnection() {
+        phase = ble.selectedID == nil ? .awaitingAdapter : .idle
+        status = "Выберите адаптер или подключитесь вручную"
     }
 
     func setThreshold(_ limit: ThermalThresholds.Limit, to value: Int) {
@@ -92,24 +134,39 @@ enum MeasurementPhase {
 
     func setScenario(_ scenario: SimulationScenario) {
         self.scenario = scenario
-        if source == .simulator && isRunning { start() }
+        if source == .simulator && !manuallyStopped { start() }
     }
 
     func selectDevice(_ id: UUID) {
-        ble.select(id)
+        guard ble.select(id) else { return }
         start()
     }
 
-    func start() {
-        stop(resetBLE: false)
+    func discoverAdapters() {
+        guard source == .vehicle, sceneIsActive, !isRunning else { return }
+        if ble.isClosed { replaceBLE() }
+        ble.discover()
+    }
+
+    func start(preservingHistory: Bool = false) {
+        let previousLevel = level
+        stopSession(resetBLE: false)
+        manuallyStopped = false
+        attemptedAutoActivity = false
+        if !preservingHistory { manuallyEndedActivity = false }
         guard source == .simulator || ble.selectedID != nil else {
             phase = .awaitingAdapter
             status = "Сначала выберите BLE-адаптер"
             return
         }
-        resetHistory()
+        if preservingHistory {
+            warmup.interrupt()
+            level = previousLevel
+        } else {
+            resetHistory()
+        }
         // Reuse the discovery manager on first connection. Replace a closed link before retrying.
-        if source == .vehicle && ble.isClosed { ble = BLETransport() }
+        if source == .vehicle && ble.isClosed { replaceBLE() }
         let id = runID
         let currentSource = source
         let currentScenario = scenario
@@ -122,7 +179,18 @@ enum MeasurementPhase {
         }
     }
 
-    func stop(resetBLE: Bool = true) {
+    func stop() {
+        manuallyStopped = true
+        stopSession()
+    }
+
+    private func replaceBLE() {
+        let replacement = BLETransport()
+        replacement.allowsUnfilteredScan = sceneIsActive
+        ble = replacement
+    }
+
+    private func stopSession(resetBLE: Bool = true) {
         runID = UUID()
         session?.cancel()
         session = nil
@@ -130,7 +198,7 @@ enum MeasurementPhase {
         transport = nil
         if resetBLE {
             ble.disconnect()
-            ble = BLETransport()
+            replaceBLE()
         }
         isRunning = false
         phase = .stopped
@@ -150,10 +218,38 @@ enum MeasurementPhase {
     }
 
     func toggleActivity() {
-        if presentation.hasActivity { endActivity(); return }
-        guard let coolant else { return }
+        attemptedAutoActivity = true
+        if presentation.hasActivity {
+            manuallyEndedActivity = true
+            endActivity()
+            return
+        }
+        startActivity(automatically: false)
+    }
+
+    private func startAutomaticActivityIfPossible() {
+        #if !CARGAUGE_BASIC
+        guard autoLiveActivity, !attemptedAutoActivity, !manuallyEndedActivity, sceneIsActive,
+              !presentation.hasActivity, coolant?.isFresh(at: Date()) == true else { return }
+        attemptedAutoActivity = true
+        startActivity(automatically: true)
+        #endif
+    }
+
+    private func startActivity(automatically: Bool) {
+        guard sceneIsActive, let coolant else { return }
         do {
-            try presentation.startActivity(coolant: coolant, source: source, level: level)
+            try presentation.startActivity(coolant: coolant, source: source, level: level) { [weak self] error in
+                guard let self else { return }
+                self.refreshActivityState()
+                self.presentationMessage = error?.localizedDescription
+                if error != nil {
+                    self.activityWasAutomatic = false
+                    // A queued start may expire while the app is switching scenes.
+                    if !self.sceneIsActive { self.attemptedAutoActivity = false }
+                }
+            }
+            activityWasAutomatic = automatically
             activityIsRunning = presentation.hasActivity
             presentationMessage = nil
         } catch {
@@ -183,65 +279,100 @@ enum MeasurementPhase {
     private func endActivity() {
         presentation.endActivity()
         activityIsRunning = false
+        activityWasAutomatic = false
     }
 
     private func run(id: UUID, source: DataSource, scenario: SimulationScenario) async {
-        var backoff = ReconnectBackoff()
+        var failures = 0
+        var simulatedBreak = scenario == .reconnect
         while !Task.isCancelled && id == runID {
-            let link: any OBDTransport = source == .vehicle ? ble : SimulatedTransport(scenario: scenario)
+            let simulatedScenario: SimulationScenario = scenario == .reconnect
+                ? (simulatedBreak ? .disconnect : .warmup) : scenario
+            let link: any OBDTransport = source == .vehicle ? ble : SimulatedTransport(scenario: simulatedScenario)
             transport = link
             let client = ELM327Client(transport: link)
+            var engine = EngineIdleMonitor()
+            var healthySamples = 0
             do {
                 phase = .connecting
                 status = "Подключение…"
                 try await link.connect()
                 try await client.initialize()
                 while !Task.isCancelled && id == runID {
+                    if source == .vehicle, backgroundBudgetExpired {
+                        park("Измерения в фоне приостановлены")
+                        return
+                    }
                     let reading = try await client.readCoolant()
                     guard !Task.isCancelled, id == runID else { return }
-                    backoff.reset()
                     phase = .streaming
                     status = source == .simulator ? "Симулятор подключён" : "ECU подключён"
                     accept(reading, source: source)
+                    startAutomaticActivityIfPossible()
                     await presentation.publish(coolant: reading, source: source, level: level)
                     try Task.checkCancellation()
+                    guard id == runID else { return }
                     refreshActivityState()
                     let snapshot = try await client.readSupplementary(source: source, coolant: reading)
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
+                    if failures > 0 {
+                        healthySamples += 1
+                        if healthySamples >= VehicleSessionPolicy.healthySamplesBeforeReset { failures = 0 }
+                    }
+                    if (source == .vehicle || scenario == .engineOff),
+                       engine.shouldPark(after: snapshot.rpm, at: Date()) {
+                        park("Обороты двигателя упали до нуля")
+                        return
+                    }
                     try await Task.sleep(for: .seconds(1))
                 }
             } catch {
-                link.disconnect()
                 guard !Task.isCancelled, id == runID else { return }
+                link.disconnect()
                 transport = nil
                 coolant = nil
                 supplementary = nil
                 warmup.interrupt()
-                presentation.clearWidget()
-                if source == .simulator || !autoConnect {
-                    endActivity()
-                    phase = .failed
-                    status = "Нет данных. \(error.localizedDescription)"
-                    isRunning = false
+                failures += 1
+                let shouldRetry = source == .vehicle ? autoConnect : simulatedBreak
+                guard shouldRetry,
+                      let seconds = VehicleSessionPolicy.retryDelay(afterConsecutiveFailures: failures,
+                                                                  inForeground: sceneIsActive) else {
+                    finishFailure(error)
                     return
                 }
-                let seconds = backoff.nextDelay()
+                simulatedBreak = false
                 phase = .retrying
                 status = "\(error.localizedDescription). Повтор через \(Int(seconds)) с"
                 await presentation.markActivityStale()
                 do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
                 guard !Task.isCancelled, id == runID else { return }
-                if !autoConnect {
-                    status = "Автоподключение выключено"
-                    phase = .stopped
-                    endActivity()
-                    isRunning = false
+                if !sceneIsActive || (source == .vehicle && !autoConnect) {
+                    finishFailure(error)
                     return
                 }
-                ble = BLETransport()
+                if source == .vehicle { replaceBLE() }
             }
         }
+    }
+
+    private var backgroundBudgetExpired: Bool {
+        backgroundSince.map { $0.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumBackgroundTime) } ?? false
+    }
+
+    private func park(_ message: String) {
+        stopSession()
+        phase = .parked
+        status = message
+    }
+
+    private func finishFailure(_ error: Error) {
+        presentation.clearWidget()
+        endActivity()
+        phase = .failed
+        status = "Нет данных. \(error.localizedDescription)"
+        isRunning = false
     }
 
     private func accept(_ reading: Reading, source: DataSource) {

@@ -50,8 +50,15 @@ private struct CoolantWidget: Widget {
                         .minimumScaleFactor(0.55)
                         .lineLimit(1)
                         .foregroundStyle(temperatureColor(snapshot.level))
+                    if snapshot.level != .normal {
+                        Text(snapshot.level == .critical ? "Перегрев" : "Высокая температура")
+                            .font(.caption2.bold())
+                            .foregroundStyle(temperatureColor(snapshot.level))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
                     if snapshot.source == .simulator { Text("Симулятор").font(.caption2) }
-                    Text("Замер \(snapshot.sampleDate, style: .time)")
+                    Text("Замер в \(snapshot.sampleDate, style: .time)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else {
@@ -88,9 +95,8 @@ private struct CoolantLiveActivity: Widget {
             } compactTrailing: {
                 Text(context.isStale ? "—" : "\(context.state.coolant)°")
                     .monospacedDigit()
-                    .foregroundStyle(temperatureColor(context.state.level))
+                    .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
             } minimal: {
-                // The smallest presentation has room for a source icon for simulated data.
                 if context.attributes.source == .simulator {
                     Image(systemName: "testtube.2").accessibilityLabel("Симулятор")
                 } else {
@@ -108,8 +114,8 @@ private struct ActivityTemperature: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: context.state.level == .normal ? "thermometer.medium" : "exclamationmark.triangle.fill")
-                .foregroundStyle(temperatureColor(context.state.level))
+            Image(systemName: context.isStale ? "thermometer.medium" : (context.state.level == .normal ? "thermometer.medium" : "exclamationmark.triangle.fill"))
+                .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
             VStack(alignment: .leading, spacing: 2) {
                 Text(context.attributes.source == .simulator ? "ОЖ · Симулятор" : "Температура ОЖ")
                     .font(.caption)
@@ -119,6 +125,20 @@ private struct ActivityTemperature: View {
                     .monospacedDigit()
                     .minimumScaleFactor(0.6)
                     .lineLimit(1)
+                    .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
+                if !context.isStale && context.state.level != .normal {
+                    Text(context.state.level == .critical ? "Перегрев" : "Высокая температура")
+                        .font(.caption2.bold())
+                        .foregroundStyle(temperatureColor(context.state.level))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                if !context.isStale {
+                    Text("Замер в \(context.state.sampleDate, style: .time)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }

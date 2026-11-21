@@ -81,6 +81,7 @@ struct TemperatureInstrument: View {
             case .awaitingAdapter: ("Адаптер не выбран", "link", palette.muted, "connection-status")
             case .failed where source == .vehicle: ("Ошибка подключения", "exclamationmark.circle", palette.warning, "connection-status")
             case .stopped: ("Измерения остановлены", "pause.circle", palette.muted, "connection-status")
+            case .parked: ("Измерения приостановлены", "pause.circle", palette.muted, "connection-status")
             default: ("Нет свежих данных", "circle.dotted", palette.muted, "connection-status")
             }
         }

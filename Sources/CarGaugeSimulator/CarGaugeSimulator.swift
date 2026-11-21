@@ -5,7 +5,7 @@ import Foundation
     @MainActor static func main() async throws {
         let argument = CommandLine.arguments.dropFirst().first ?? "warmup"
         guard let scenario = SimulationScenario(rawValue: argument) else {
-            print("Usage: cargauge-simulator [warmup|overheat|noVoltagePID|disconnect]")
+            print("Usage: cargauge-simulator [\(SimulationScenario.allCases.map(\.rawValue).joined(separator: "|"))]")
             return
         }
         let transport = SimulatedTransport(scenario: scenario, latency: .zero)
@@ -25,7 +25,20 @@ import Foundation
                 print("\(index): \(Int(coolant.value)) °C, \(rpm), \(voltage) • \(level)")
             } catch {
                 print("DISCONNECTED / stale: \(error.localizedDescription)")
-                if scenario != .disconnect { throw error }
+                let expected: [SimulationScenario: OBDError] = [
+                    .disconnect: .disconnected, .reconnect: .disconnected, .missingCoolant: .noData,
+                    .invalidCoolant: .malformedResponse, .hangingAdapter: .timeout,
+                ]
+                guard let expectedError = expected[scenario], (error as? OBDError) == expectedError else { throw error }
+                if scenario == .reconnect {
+                    let restored = SimulatedTransport(scenario: .warmup, latency: .zero)
+                    try await restored.connect()
+                    defer { restored.disconnect() }
+                    let resumed = ELM327Client(transport: restored)
+                    try await resumed.initialize()
+                    let reading = try await resumed.readCoolant()
+                    print("RECONNECTED: \(Int(reading.value)) °C")
+                }
                 break
             }
         }
