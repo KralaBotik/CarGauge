@@ -55,6 +55,16 @@ import Testing
     #expect(buffer.hasPartialPayload)
 }
 
+@Test func separateNotificationsAfterThePromptAllowPaddingButRejectAPayload() throws {
+    var frame = ELMCommandFrame()
+    let partial = try frame.append(Data("41057B\r".utf8))
+    let prompt = try frame.append(Data(">".utf8))
+    let padding = try frame.append(Data("\r\n".utf8))
+    #expect(!partial && prompt && !padding)
+    #expect(frame.response == "41057B\r")
+    #expect(throws: OBDError.malformedResponse) { try frame.append(Data("41057B>".utf8)) }
+}
+
 @MainActor
 @Test func rejectedSamplesAndTimeoutDoNotProduceReadings() async throws {
     for (scenario, expected) in [(SimulationScenario.missingCoolant, OBDError.noData),

@@ -50,8 +50,15 @@ struct DashboardView: View {
     }
 
     private var connectionStatus: some View {
-        HStack(spacing: GaugeSpacing.small) {
-            GaugeStatus(title: model.connectionTitle, symbol: "dot.radiowaves.left.and.right", tone: palette.muted)
+        let (symbol, tone): (String, Color) = switch model.phase {
+        case .streaming: ("checkmark.circle.fill", palette.operating)
+        case .connecting, .retrying: ("dot.radiowaves.left.and.right", palette.accent)
+        case .failed: ("exclamationmark.circle", palette.warning)
+        case .parked, .stopped: ("pause.circle", palette.muted)
+        case .idle, .awaitingAdapter: ("link", palette.muted)
+        }
+        return HStack(spacing: GaugeSpacing.small) {
+            GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
                 .accessibilityIdentifier("connection-status")
             #if DEBUG
             if isSimulation {
@@ -74,6 +81,7 @@ struct DashboardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Button(action: showAdapter) {
                     Label("Найти адаптер", systemImage: "link")
+                        .frame(maxWidth: .infinity, minHeight: 46)
                 }
                 .buttonStyle(GaugeActionStyle(emphasized: true))
                 .accessibilityIdentifier("find-adapter")

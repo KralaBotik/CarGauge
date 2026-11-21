@@ -95,10 +95,9 @@ enum BLEDiagnostic: Equatable {
     private var deadline: Task<Void, Never>?
     private var scanDeadline: Task<Void, Never>?
     private var retrievalDeadline: Task<Void, Never>?
-    private var buffer = ELMPromptBuffer()
+    private var frame = ELMCommandFrame()
     private var pendingWrite: Data?
     private var waitingForWriteAck = false
-    private var completedResponse: String?
     private var discovering = false
     private var extendedDiscovery = false
     private var scanningForSelection = false
@@ -208,7 +207,7 @@ enum BLEDiagnostic: Equatable {
                 }
                 operationID = id
                 responseWaiter = continuation
-                buffer.reset()
+                frame = ELMCommandFrame()
                 pendingWrite = Data((command + "\r").utf8)
                 armDeadline(seconds: timeout, operation: id)
                 flushWrite()
@@ -359,13 +358,19 @@ enum BLEDiagnostic: Equatable {
     }
 
     private func completeExchangeIfReady() {
-        guard !waitingForWriteAck, let response = completedResponse, let waiter = responseWaiter else { return }
+        guard !waitingForWriteAck, frame.response != nil, let id = operationID else { return }
         deadline?.cancel()
-        deadline = nil
-        operationID = nil
-        completedResponse = nil
-        responseWaiter = nil
-        waiter.resume(returning: response)
+        // Give queued trailing notifications a chance to arrive before the next write.
+        deadline = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(60)) } catch { return }
+            guard let self, !Task.isCancelled, self.operationID == id,
+                  let response = self.frame.response, let waiter = self.responseWaiter else { return }
+            self.deadline = nil
+            self.operationID = nil
+            self.frame = ELMCommandFrame()
+            self.responseWaiter = nil
+            waiter.resume(returning: response)
+        }
     }
 
     private func fail(_ error: Error, detail: BLEDiagnostic? = nil) {
@@ -392,10 +397,9 @@ enum BLEDiagnostic: Equatable {
         remainingProfiles.removeAll()
         pendingWrite = nil
         waitingForWriteAck = false
-        completedResponse = nil
         writeCharacteristic = nil
         notifyCharacteristic = nil
-        buffer.reset()
+        frame = ELMCommandFrame()
         let connection = connectWaiter
         let response = responseWaiter
         connectWaiter = nil
@@ -550,20 +554,13 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
         guard device === peripheral, characteristic === notifyCharacteristic, !closed else { return }
         if let error { fail(error); return }
         guard let data = characteristic.value, !data.isEmpty else { return }
-        if responseWaiter == nil && data.allSatisfy({ [0x09, 0x0A, 0x0D, 0x20].contains($0) }) { return }
-        guard responseWaiter != nil, pendingWrite == nil, completedResponse == nil else {
+        if (responseWaiter == nil || pendingWrite != nil) && ELMPromptBuffer.isPadding(data) { return }
+        guard responseWaiter != nil, pendingWrite == nil else {
             fail(OBDError.malformedResponse)
             return
         }
         do {
-            let frames = try buffer.append(data)
-            guard !frames.isEmpty else { return }
-            guard frames.count == 1, !buffer.hasPartialPayload else {
-                fail(OBDError.malformedResponse)
-                return
-            }
-            completedResponse = frames[0]
-            completeExchangeIfReady()
+            if try frame.append(data) { completeExchangeIfReady() }
         } catch { fail(error) }
     }
 

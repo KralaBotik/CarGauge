@@ -67,7 +67,31 @@ public struct ELMPromptBuffer: Sendable {
 
     public mutating func reset() { bytes.removeAll(keepingCapacity: true) }
 
-    public var hasPartialPayload: Bool { bytes.contains { ![0x09, 0x0A, 0x0D, 0x20].contains($0) } }
+    public var hasPartialPayload: Bool { !Self.isPadding(bytes) }
+
+    public static func isPadding(_ bytes: some Sequence<UInt8>) -> Bool {
+        bytes.allSatisfy { [0x09, 0x0A, 0x0D, 0x20].contains($0) }
+    }
+}
+
+/// Collects one response for one command, including any tail received before the next write.
+public struct ELMCommandFrame: Sendable {
+    private var buffer = ELMPromptBuffer()
+    public private(set) var response: String?
+
+    public init() {}
+
+    public mutating func append(_ data: Data) throws -> Bool {
+        if response != nil {
+            guard ELMPromptBuffer.isPadding(data) else { throw OBDError.malformedResponse }
+            return false
+        }
+        let frames = try buffer.append(data)
+        guard let first = frames.first else { return false }
+        guard frames.count == 1, !buffer.hasPartialPayload else { throw OBDError.malformedResponse }
+        response = first
+        return true
+    }
 }
 
 public enum OBDDecoder {
