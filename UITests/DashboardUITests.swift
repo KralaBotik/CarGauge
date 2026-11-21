@@ -46,25 +46,32 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Температурные пороги"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Оформление"].exists)
         let liveActivityButton = app.buttons["live-activity-button"]
+        let automaticActivity = app.switches["auto-live-activity"]
         #if CARGAUGE_BASIC
         XCTAssertFalse(liveActivityButton.exists)
+        XCTAssertFalse(automaticActivity.exists)
         #else
         for _ in 0..<4 where !liveActivityButton.isHittable { app.swipeUp() }
         XCTAssertTrue(liveActivityButton.isHittable)
+        XCTAssertTrue(automaticActivity.exists)
         #endif
     }
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {
         let app = launch("warmup", appearance: "dark")
+        let stop = app.buttons["stop-measurement"]
+        XCTAssertTrue(stop.waitForExistence(timeout: simulatorResponseTimeout))
+        stop.tap()
         app.tabBars.buttons["Настройки"].tap()
         let reset = app.buttons["reset-thresholds"]
+        XCTAssertTrue(reset.waitForExistence(timeout: simulatorResponseTimeout))
         if reset.isEnabled { reset.tap() }
         let stepper = app.steppers["warning-threshold"]
-        XCTAssertTrue(stepper.waitForExistence(timeout: 5))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
         stepper.buttons.element(boundBy: 1).tap()
-        XCTAssertTrue(stepper.waitForTemperature(106))
+        XCTAssertTrue(stepper.waitForTemperature(106, timeout: simulatorResponseTimeout))
         reset.tap()
-        XCTAssertTrue(stepper.waitForTemperature(105))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
     }
 
     @MainActor func testSimulatorSurfacesOverheat() {
@@ -91,6 +98,30 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(voltage.isHittable)
     }
 
+    @MainActor func testRememberedAdapterUsesVehicleWithAutoConnectDisabled() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-selectedBLEPeripheral", "00000000-0000-0000-0000-000000000001",
+                               "-autoConnect", "NO"]
+        app.launch()
+        XCTAssertTrue(app.buttons["source-vehicle"].waitForExistence(timeout: simulatorResponseTimeout))
+        XCTAssertTrue(app.buttons["source-vehicle"].isSelected)
+        XCTAssertTrue(app.buttons["start-measurement"].exists)
+        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
+    }
+
+    @MainActor func testManualStopSurvivesReturnFromBackground() {
+        let app = launch("warmup", appearance: "dark")
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["stop-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
+        app.buttons["stop-measurement"].tap()
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["start-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
+        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
+    }
+
     @MainActor private func launch(_ scenario: String, appearance: String, accessibilityText: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--simulation-scenario", scenario, "-appearance", appearance]
@@ -110,10 +141,10 @@ final class DashboardUITests: XCTestCase {
 }
 
 private extension XCUIElement {
-    @MainActor func waitForTemperature(_ degrees: Int) -> Bool {
+    @MainActor func waitForTemperature(_ degrees: Int, timeout: TimeInterval) -> Bool {
         let temperature = "\(degrees) °C"
         let predicate = NSPredicate(format: "exists == YES AND (value == %@ OR label CONTAINS %@)", temperature, temperature)
-        return wait(for: predicate, timeout: 5)
+        return wait(for: predicate, timeout: timeout)
     }
 
     @MainActor func waitForLabel(matching pattern: String, timeout: TimeInterval) -> Bool {

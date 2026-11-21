@@ -7,10 +7,15 @@ import Foundation
     private var rpmSupported = true
     private var voltageSupported = true
     private var rpmRetryAfter: Date?
+    private var sequenceInProgress = false
+    private var initialCoolant: Reading?
 
     public init(transport: any OBDTransport) { self.transport = transport }
 
     public func initialize() async throws {
+        try beginSequence()
+        defer { sequenceInProgress = false }
+        initialCoolant = nil
         voltageSource = .ecu
         rpmSupported = true
         voltageSupported = true
@@ -26,16 +31,27 @@ import Foundation
             }
         }
         // The first OBD request may perform a slow automatic protocol search.
-        _ = try OBDDecoder.decode(.coolant, response: await transport.exchange("0105", timeout: 15))
+        let value = try OBDDecoder.decode(.coolant, response: await transport.exchange("0105", timeout: 15))
+        try Task.checkCancellation()
+        initialCoolant = Reading(value, at: Date())
     }
 
     public func readCoolant() async throws -> Reading {
+        try beginSequence()
+        defer { sequenceInProgress = false }
+        if let initialCoolant {
+            self.initialCoolant = nil
+            if initialCoolant.isFresh(at: Date()) { return initialCoolant }
+        }
         let value = try await read(.coolant)
+        try Task.checkCancellation()
         return Reading(value, at: Date())
     }
 
     /// Coolant is published first by the caller; slow optional sensors never hide it.
     public func readSupplementary(source: DataSource, coolant: Reading) async throws -> TelemetrySnapshot {
+        try beginSequence()
+        defer { sequenceInProgress = false }
         var rpm: Reading?
         if rpmSupported && (rpmRetryAfter.map { $0 <= Date() } ?? true) {
             let response = try await transport.exchange(OBDPID.rpm.rawValue, timeout: 3)
@@ -69,7 +85,14 @@ import Foundation
                 }
             }
         }
+        try Task.checkCancellation()
         return TelemetrySnapshot(source: source, coolant: coolant, rpm: rpm, voltage: voltage, voltageSource: voltageSource)
+    }
+
+    private func beginSequence() throws {
+        try Task.checkCancellation()
+        guard !sequenceInProgress else { throw OBDError.busy }
+        sequenceInProgress = true
     }
 
     private func read(_ pid: OBDPID) async throws -> Double {

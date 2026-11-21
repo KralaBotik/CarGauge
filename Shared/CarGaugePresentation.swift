@@ -19,10 +19,12 @@ struct WidgetSnapshot: Codable {
     let level: ThermalLevel
 
     // The widget is a dated snapshot. Its reloads are scheduled by WidgetKit.
-    var expiration: Date { sampleDate.addingTimeInterval(15 * 60) }
+    var expiration: Date { sampleDate.addingTimeInterval(60) }
 }
 
 enum WidgetSnapshotStore {
+    static var containerIsAvailable: Bool { file != nil }
+
     private static var file: URL? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "CarGaugeAppGroup") as? String else { return nil }
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)?
@@ -44,7 +46,13 @@ enum WidgetSnapshotStore {
         }
     }
 
-    static func clear() {
-        if let file { try? FileManager.default.removeItem(at: file) }
+    static func clear() -> Bool {
+        guard let file else { return false }
+        do {
+            try FileManager.default.removeItem(at: file)
+            return true
+        } catch {
+            return false
+        }
     }
 }

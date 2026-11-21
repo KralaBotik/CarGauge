@@ -76,9 +76,9 @@ import Testing
         let first = try await client.readCoolant()
         let snapshot = try await client.readSupplementary(source: .simulator, coolant: first)
         let second = try await client.readCoolant()
-        #expect(first.value == 22)
+        #expect(first.value == 20)
         #expect(second.value > first.value)
-        #expect(snapshot.rpm?.value == 1370)
+        #expect(snapshot.rpm?.value == 1385)
         #expect(snapshot.source == .simulator)
         #expect(snapshot.voltageSource == (scenario == .warmup ? .ecu : .adapter))
         #expect(snapshot.voltage?.value == (scenario == .warmup ? 14.2 : 14.1))
@@ -105,7 +105,7 @@ import Testing
     try await failing.connect()
     let failingClient = ELM327Client(transport: failing)
     try await failingClient.initialize()
-    for _ in 0..<5 { _ = try await failingClient.readCoolant() }
+    for _ in 0..<6 { _ = try await failingClient.readCoolant() }
     await #expect(throws: OBDError.disconnected) { try await failingClient.readCoolant() }
 }
 
