@@ -20,7 +20,8 @@ enum MeasurementPhase {
     @Published private(set) var ble = BLETransport()
     @Published private(set) var activityIsRunning = false
     @Published var presentationMessage: String?
-    @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") as? Bool ?? true {
+    @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") == nil
+        || UserDefaults.standard.bool(forKey: "autoConnect") {
         didSet { UserDefaults.standard.set(autoConnect, forKey: "autoConnect") }
     }
     #if !CARGAUGE_BASIC
