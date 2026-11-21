@@ -118,7 +118,10 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testZeroRPMLeadsToParkedState() {
         let app = launch(scenario: "engineOff")
-        XCTAssertTrue(app.staticTexts["Автомобиль на стоянке"].waitForExistence(timeout: responseTimeout))
+        guard app.staticTexts["Автомобиль на стоянке"].waitForExistence(timeout: responseTimeout) else {
+            XCTFail("The engine-off scenario did not reach its parked state.")
+            return
+        }
         XCTAssertTrue(app.buttons["resume-measurements"].exists)
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         snapshot(app, named: "11-Parked")

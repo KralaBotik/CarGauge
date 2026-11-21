@@ -57,7 +57,10 @@ struct DashboardView: View {
         case .parked, .stopped: ("pause.circle", palette.muted)
         case .idle, .awaitingAdapter: ("link", palette.muted)
         }
-        return HStack(spacing: GaugeSpacing.small) {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.small))
+            : AnyLayout(HStackLayout(spacing: GaugeSpacing.small))
+        return layout {
             GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
                 .accessibilityIdentifier("connection-status")
             #if DEBUG

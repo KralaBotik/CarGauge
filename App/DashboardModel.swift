@@ -355,6 +355,7 @@ enum MeasurementPhase {
         let startedAt = ContinuousClock.now
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
+        var engineFixtureTime = Date(timeIntervalSinceReferenceDate: 0)
         #endif
         while !Task.isCancelled && id == runID {
             let link: any OBDTransport
@@ -410,11 +411,27 @@ enum MeasurementPhase {
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
                     retryBudget.didCompleteCycle()
-                    if engine.shouldPark(after: snapshot.rpm, at: Date()) {
+                    let engineSample: (rpm: Reading?, at: Date)
+                    let pollDelay: Duration
+                    #if DEBUG
+                    if launchScenario == .engineOff {
+                        // XCTest can suspend the simulator between samples. Drive this fixture by sample count.
+                        engineFixtureTime += 2
+                        engineSample = (snapshot.rpm.map { Reading($0.value, at: engineFixtureTime) }, engineFixtureTime)
+                        pollDelay = .milliseconds(150)
+                    } else {
+                        engineSample = (snapshot.rpm, .now)
+                        pollDelay = .seconds(1)
+                    }
+                    #else
+                    engineSample = (snapshot.rpm, .now)
+                    pollDelay = .seconds(1)
+                    #endif
+                    if engine.shouldPark(after: engineSample.rpm, at: engineSample.at) {
                         pauseSession("Обороты двигателя упали до нуля", engineStopped: true)
                         return
                     }
-                    try await Task.sleep(for: .seconds(1))
+                    try await Task.sleep(for: pollDelay)
                 }
             } catch {
                 guard !Task.isCancelled, id == runID else { return }
