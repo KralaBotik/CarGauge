@@ -2,10 +2,7 @@ import CarGaugeCore
 import Foundation
 import Testing
 
-@Test func rememberedAdapterWinsOnColdLaunchAndRetriesAreBounded() {
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: false) == .vehicle)
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: true) == .simulator)
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: false, launchesSimulator: false) == .simulator)
+@Test func vehicleRetriesAreBoundedAndStayInForeground() {
     var budget = VehicleRetryBudget()
     let delays = (0..<5).map { _ in budget.nextDelay(inForeground: true) }
     #expect(delays == [1, 2, 4, 8, nil])

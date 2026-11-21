@@ -1,136 +1,190 @@
 import XCTest
 
 final class DashboardUITests: XCTestCase {
-    // A busy hosted simulator can spend several seconds servicing each accessibility query.
-    private let simulatorResponseTimeout: TimeInterval = 40
+    private let responseTimeout: TimeInterval = 40
 
-    @MainActor func testDarkDashboardFitsBeforeScrollingAndClearsOnStop() {
-        let app = launch("warmup", appearance: "dark")
+    #if DEBUG
+    @MainActor func testFirstLaunchHasUsefulOnboardingAndNoMeasurements() {
+        let app = launch(appearance: "light")
+        XCTAssertTrue(app.staticTexts["Подключите OBD-II адаптер"].waitForExistence(timeout: responseTimeout))
+        let find = app.buttons["find-adapter"]
+        XCTAssertTrue(find.isHittable)
+        XCTAssertEqual(find.label, "Найти адаптер")
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        XCTAssertFalse(app.staticTexts["rpm-value"].exists)
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        snapshot(app, named: "01-Onboarding")
+    }
+
+    @MainActor func testDiscoverySeparatesLikelyAdaptersAndShowsUnnamedOnRequest() {
+        let app = launch(appearance: "light", options: ["--adapter-list-fixture"])
+        app.buttons["find-adapter"].tap()
+        XCTAssertTrue(app.staticTexts["likely-adapters"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["other-devices"].exists)
+        XCTAssertTrue(app.buttons["Vgate iCar Pro BLE"].exists)
+        XCTAssertFalse(app.buttons["Устройство без имени"].exists)
+        app.buttons["extended-discovery"].tap()
+        XCTAssertTrue(app.buttons["Устройство без имени"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "02-Adapter-Discovery")
+        app.buttons["close-adapter-setup"].tap()
+        XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
+    }
+
+    @MainActor func testWaitingForFirstReadingDoesNotShowEmptyInstruments() {
+        let app = launch(appearance: "dark", options: ["--adapter-waiting-fixture"])
+        XCTAssertTrue(app.staticTexts["Ожидание первого замера"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        XCTAssertFalse(app.buttons["retry-connection"].exists)
+        snapshot(app, named: "03-Connecting")
+    }
+
+    @MainActor func testDarkDashboardFitsBeforeScrolling() {
+        let app = launch(scenario: "warmup")
         let temperature = app.staticTexts["coolant-value"]
         let rpm = app.staticTexts["rpm-value"]
         let voltage = app.staticTexts["voltage-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
-        XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: simulatorResponseTimeout))
-        XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: simulatorResponseTimeout))
-        XCTAssertTrue(app.buttons["source-simulator"].isSelected)
-
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: responseTimeout))
+        XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: responseTimeout))
+        XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
-        XCTAssertTrue(chart.waitForExistence(timeout: 5))
-        XCTAssertFalse(chart.frame.isEmpty)
-        XCTAssertLessThanOrEqual(chart.frame.maxY, app.tabBars.firstMatch.frame.minY + 1)
+        XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout))
+        XCTAssertGreaterThan(chart.frame.height, 0)
+        XCTAssertLessThanOrEqual(chart.frame.maxY, app.frame.maxY - 25)
         XCTAssertLessThan(temperature.frame.minY, rpm.frame.minY)
         XCTAssertLessThan(rpm.frame.minY, chart.frame.minY)
-        XCTAssertFalse(app.descendants(matching: .any)["coolant-pid"].firstMatch.exists)
-        snapshot(app, named: "Dashboard-Dark")
-
-        let stop = app.buttons["stop-measurement"]
-        XCTAssertTrue(stop.isHittable)
-        stop.tap()
-        XCTAssertTrue(temperature.wait(for: \.label, toEqual: "—", timeout: 5))
-        app.tabBars.buttons["История"].tap()
-        let lastReading = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Последний замер,")).firstMatch
-        XCTAssertTrue(lastReading.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        snapshot(app, named: "04-Driving-Dark")
     }
 
-    @MainActor func testLightDashboardAndTabs() {
-        let app = launch("warmup", appearance: "light")
-        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ В", timeout: simulatorResponseTimeout))
-        snapshot(app, named: "Dashboard-Light")
+    @MainActor func testLightDashboardAndNavigation() {
+        let app = launch(scenario: "warmup", appearance: "light")
+        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ В", timeout: responseTimeout))
+        snapshot(app, named: "05-Driving-Light")
 
-        app.tabBars.buttons["История"].tap()
-        XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: 5))
-        app.tabBars.buttons["Диагностика"].tap()
-        let coolantPID = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
-        XCTAssertTrue(coolantPID.waitForExistence(timeout: 5))
-        app.tabBars.buttons["Настройки"].tap()
-        XCTAssertTrue(app.staticTexts["Температурные пороги"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Оформление"].exists)
-        let liveActivityButton = app.buttons["live-activity-button"]
-        let automaticActivity = app.switches["auto-live-activity"]
+        app.buttons["history-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "06-Trip-History")
+        app.navigationBars.buttons.firstMatch.tap()
+
+        app.buttons["settings-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Оформление"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.descendants(matching: .any)["simulation-scenario"].firstMatch.exists)
+        snapshot(app, named: "07-Settings")
+        let diagnostics = app.buttons["diagnostics-nav"]
+        for _ in 0..<5 where !diagnostics.isHittable { app.swipeUp() }
         #if CARGAUGE_BASIC
-        XCTAssertFalse(liveActivityButton.exists)
-        XCTAssertFalse(automaticActivity.exists)
+        XCTAssertFalse(app.switches["auto-live-activity"].exists)
         #else
-        for _ in 0..<4 where !liveActivityButton.isHittable { app.swipeUp() }
-        XCTAssertTrue(liveActivityButton.isHittable)
-        XCTAssertTrue(automaticActivity.exists)
+        XCTAssertTrue(app.switches["auto-live-activity"].exists)
         #endif
+        diagnostics.tap()
+        let pid = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
+        XCTAssertTrue(pid.waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "08-Diagnostics")
     }
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {
-        let app = launch("warmup", appearance: "dark")
-        let stop = app.buttons["stop-measurement"]
-        XCTAssertTrue(stop.waitForExistence(timeout: simulatorResponseTimeout))
-        stop.tap()
-        app.tabBars.buttons["Настройки"].tap()
+        let app = launch()
+        app.buttons["settings-nav"].tap()
         let reset = app.buttons["reset-thresholds"]
-        XCTAssertTrue(reset.waitForExistence(timeout: simulatorResponseTimeout))
+        for _ in 0..<4 where !reset.isHittable { app.swipeUp() }
         if reset.isEnabled { reset.tap() }
         let stepper = app.steppers["warning-threshold"]
-        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: responseTimeout))
+        if !stepper.isHittable { app.swipeDown() }
         stepper.buttons.element(boundBy: 1).tap()
-        XCTAssertTrue(stepper.waitForTemperature(106, timeout: simulatorResponseTimeout))
+        XCTAssertTrue(stepper.waitForTemperature(106, timeout: responseTimeout))
         reset.tap()
-        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: responseTimeout))
     }
 
-    @MainActor func testSimulatorSurfacesOverheat() {
-        let app = launch("overheat", appearance: "dark")
+    @MainActor func testOverheatIsVisibleAndExplained() {
+        let app = launch(scenario: "overheat")
         let warning = app.descendants(matching: .any)["overheat-critical"].firstMatch
-        XCTAssertTrue(warning.waitForExistence(timeout: simulatorResponseTimeout))
-        snapshot(app, named: "Dashboard-Overheat")
+        XCTAssertTrue(warning.waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "09-Overheat")
     }
 
-    @MainActor func testSimulatorDisconnectClearsTemperature() {
-        let app = launch("disconnect", appearance: "dark")
+    @MainActor func testDisconnectClearsTemperatureAndOffersRetry() {
+        let app = launch(scenario: "disconnect")
         let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
-        XCTAssertTrue(temperature.wait(for: \.label, toEqual: "—", timeout: 15))
+        XCTAssertTrue(temperature.waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(temperature.wait(for: \.label, toEqual: "Нет свежих данных", timeout: responseTimeout))
+        let retry = app.buttons["retry-connection"]
+        XCTAssertTrue(retry.waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "10-Lost-Connection")
+    }
+
+    @MainActor func testZeroRPMLeadsToParkedState() {
+        let app = launch(scenario: "engineOff")
+        XCTAssertTrue(app.staticTexts["Автомобиль на стоянке"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.buttons["resume-measurements"].exists)
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        snapshot(app, named: "11-Parked")
     }
 
     @MainActor func testAccessibilityTextKeepsValuesReachable() {
-        let app = launch("warmup", appearance: "dark", accessibilityText: true)
+        let app = launch(scenario: "warmup", options: [
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXL",
+        ])
         let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
-        snapshot(app, named: "Dashboard-Accessibility")
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: responseTimeout))
+        snapshot(app, named: "12-Dynamic-Type")
         let voltage = app.staticTexts["voltage-value"]
         for _ in 0..<4 where !voltage.isHittable { app.swipeUp() }
         XCTAssertTrue(voltage.isHittable)
     }
 
-    @MainActor func testRememberedAdapterUsesVehicleWithAutoConnectDisabled() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-selectedBLEPeripheral", "00000000-0000-0000-0000-000000000001",
-                               "-autoConnect", "NO"]
-        app.launch()
-        XCTAssertTrue(app.buttons["source-vehicle"].waitForExistence(timeout: simulatorResponseTimeout))
-        XCTAssertTrue(app.buttons["source-vehicle"].isSelected)
-        XCTAssertTrue(app.buttons["start-measurement"].exists)
-        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
+    @MainActor func testLegacyUUIDAllowsManualConnectionWithoutDemo() {
+        let app = launch(options: ["-selectedBLEPeripheral", "00000000-0000-0000-0000-000000000001",
+                                   "-autoConnect", "NO"])
+        XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        XCTAssertFalse(app.staticTexts["source-indicator"].exists)
     }
 
-    @MainActor func testManualStopSurvivesReturnFromBackground() {
-        let app = launch("warmup", appearance: "dark")
-        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "[0-9]+ °C", timeout: simulatorResponseTimeout))
-        XCUIDevice.shared.press(.home)
-        app.activate()
-        XCTAssertTrue(app.buttons["stop-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
-        app.buttons["stop-measurement"].tap()
-        XCUIDevice.shared.press(.home)
-        app.activate()
-        XCTAssertTrue(app.buttons["start-measurement"].waitForExistence(timeout: simulatorResponseTimeout))
-        XCTAssertEqual(app.staticTexts["coolant-value"].label, "—")
-    }
-
-    @MainActor private func launch(_ scenario: String, appearance: String, accessibilityText: Bool = false) -> XCUIApplication {
+    @MainActor private func launch(scenario: String? = nil, appearance: String = "dark",
+                                   options: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", scenario, "-appearance", appearance]
-        if accessibilityText {
-            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXL"]
-        }
+        app.launchArguments = ["-appearance", appearance] + options
+        if let scenario { app.launchArguments += ["--simulation-scenario", scenario] }
         app.launch()
         return app
     }
+    #else
+    @MainActor func testReleaseIgnoresTestLaunchFlags() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        XCTAssertFalse(app.staticTexts["rpm-value"].exists)
+        XCTAssertFalse(app.staticTexts["source-indicator"].exists)
+        snapshot(app, named: "Release-Cold-Launch")
+    }
+
+    @MainActor func testReleaseUpgradeRetainsLegacyPreferences() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["coolant-value"].exists)
+        app.buttons["settings-nav"].tap()
+        let automatic = app.switches["auto-connect"]
+        XCTAssertTrue(automatic.waitForExistence(timeout: responseTimeout))
+        XCTAssertEqual(automatic.value as? String, "0")
+        let stepper = app.steppers["warning-threshold"]
+        for _ in 0..<4 where !stepper.isHittable { app.swipeUp() }
+        XCTAssertTrue(stepper.waitForTemperature(108, timeout: responseTimeout))
+        #if !CARGAUGE_BASIC
+        let activity = app.switches["auto-live-activity"]
+        for _ in 0..<5 where !activity.isHittable { app.swipeUp() }
+        XCTAssertEqual(activity.value as? String, "1")
+        #endif
+        snapshot(app, named: "Release-Upgrade")
+    }
+    #endif
 
     @MainActor private func snapshot(_ app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -143,13 +197,11 @@ final class DashboardUITests: XCTestCase {
 private extension XCUIElement {
     @MainActor func waitForTemperature(_ degrees: Int, timeout: TimeInterval) -> Bool {
         let temperature = "\(degrees) °C"
-        let predicate = NSPredicate(format: "exists == YES AND (value == %@ OR label CONTAINS %@)", temperature, temperature)
-        return wait(for: predicate, timeout: timeout)
+        return wait(for: NSPredicate(format: "exists == YES AND (value == %@ OR label CONTAINS %@)", temperature, temperature), timeout: timeout)
     }
 
     @MainActor func waitForLabel(matching pattern: String, timeout: TimeInterval) -> Bool {
-        let predicate = NSPredicate(format: "exists == YES AND label MATCHES %@", pattern)
-        return wait(for: predicate, timeout: timeout)
+        return wait(for: NSPredicate(format: "exists == YES AND label MATCHES %@", pattern), timeout: timeout)
     }
 
     @MainActor private func wait(for predicate: NSPredicate, timeout: TimeInterval) -> Bool {

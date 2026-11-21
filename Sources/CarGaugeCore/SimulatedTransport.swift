@@ -1,3 +1,4 @@
+#if DEBUG || !os(iOS)
 import Foundation
 
 public enum SimulationScenario: String, CaseIterable, Sendable {
@@ -69,3 +70,4 @@ public enum SimulationScenario: String, CaseIterable, Sendable {
         }
     }
 }
+#endif

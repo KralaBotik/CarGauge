@@ -8,9 +8,45 @@ struct BLEDevice: Identifiable {
     let name: String
     let rssi: Int
 
-    var matchesVgateName: Bool {
-        name.localizedCaseInsensitiveContains("vgate") || name.localizedCaseInsensitiveContains("icar")
+    var hasName: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    var matchesVgateName: Bool {
+        let value = name.lowercased()
+        return ["vgate", "icar", "obd", "elm"].contains { value.contains($0) }
+    }
+}
+
+enum BLEScanState: Equatable {
+    case idle
+    case scanning
+    case finished
+    case poweredOff
+    case unauthorized
+    case unavailable
+}
+
+/// Structured transport diagnostics. Associated strings contain technical details,
+/// whereas `diagnostic` is intended for short user-facing status text.
+enum BLEDiagnostic: Equatable {
+    case noSelection
+    case selected(UUID)
+    case discovering
+    case discoveryFinished(count: Int)
+    case discoveryCancelled
+    case searchingForSelection(UUID)
+    case connecting(UUID)
+    case ready(service: String)
+    case poweredOff
+    case unauthorized
+    case unavailable
+    case resetting
+    case timeout
+    case disconnected
+    case cancelled
+    case unsupportedProfile(services: [String])
+    case failure(String)
 }
 
 /// Candidate profiles are checked against discovered characteristic properties before use.
@@ -28,14 +64,18 @@ struct BLEDevice: Identifiable {
     }
 
     private static let profiles = [Profile("18F0", "2AF0", "2AF1"), Profile("FFF0", "FFF1", "FFF2"), Profile("FFE0", "FFE1", "FFE1")]
-    private static let selectedKey = "selectedBLEPeripheral"
     @Published private(set) var devices: [BLEDevice] = []
+    @Published private(set) var scanState: BLEScanState = .idle
     @Published private(set) var diagnostic = "Адаптер не выбран"
+    @Published private(set) var diagnosticDetail: BLEDiagnostic = .noSelection
     @Published private(set) var selectedID: UUID?
-    /// Enable only while the app is in the foreground. Background scans need service filters.
+    @Published private(set) var selectedName: String?
+
+    /// Enables unfiltered scans for a selected UUID only in the foreground.
+    /// Discovery itself is always unfiltered and must be started by the user.
     var allowsUnfilteredScan = false {
         didSet {
-            guard oldValue != allowsUnfilteredScan, discovering || scanningForSelection else { return }
+            guard oldValue != allowsUnfilteredScan, scanningForSelection else { return }
             manager?.stopScan()
             startScanIfPossible()
         }
@@ -60,57 +100,79 @@ struct BLEDevice: Identifiable {
     private var waitingForWriteAck = false
     private var completedResponse: String?
     private var discovering = false
+    private var extendedDiscovery = false
     private var scanningForSelection = false
     private var ready = false
     private var closed = false
     var isClosed: Bool { closed }
 
-    override init() {
-        selectedID = UserDefaults.standard.string(forKey: Self.selectedKey).flatMap(UUID.init(uuidString:))
+    init(targetID: UUID? = nil) {
+        selectedID = targetID
         super.init()
-        if selectedID != nil { diagnostic = "Сохранён выбранный адаптер" }
+        if let targetID {
+            setDiagnostic(.selected(targetID), "Сохранён выбранный адаптер")
+        }
     }
 
+    private func setDiagnostic(_ detail: BLEDiagnostic, _ message: String) {
+        diagnosticDetail = detail
+        diagnostic = message
+    }
+
+    @discardableResult
     func select(_ id: UUID) -> Bool {
         guard !closed, connectWaiter == nil, !ready,
-              discoveredPeripherals[id] != nil else { return false }
+              discoveredPeripherals[id] != nil,
+              let device = devices.first(where: { $0.id == id }) else { return false }
         selectedID = id
-        UserDefaults.standard.set(id.uuidString, forKey: Self.selectedKey)
-        diagnostic = "Адаптер выбран: \(id.uuidString)"
-        discovering = false
-        manager?.stopScan()
-        scanDeadline?.cancel()
-        scanDeadline = nil
+        selectedName = device.hasName ? device.name : nil
+        finishDiscovery(state: .finished)
+        setDiagnostic(.selected(id), "Адаптер выбран")
         return true
     }
 
-    func discover() {
+    func discover(extended: Bool = false) {
         guard !closed, connectWaiter == nil, !ready else { return }
+        if discovering { finishDiscovery(state: .idle) }
         devices = []
         discoveredPeripherals.removeAll()
+        extendedDiscovery = extended
         discovering = true
-        diagnostic = "Поиск BLE-устройств…"
+        scanState = .scanning
+        setDiagnostic(.discovering, "Поиск BLE-устройств…")
         ensureManager()
-        startScanIfPossible()
         scanDeadline?.cancel()
         scanDeadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(15)) } catch { return }
             guard let self, self.discovering, !Task.isCancelled else { return }
-            self.manager?.stopScan()
-            self.discovering = false
-            self.scanDeadline = nil
-            self.diagnostic = self.devices.isEmpty ? "Устройства не найдены. Проверьте питание и BLE." : "Выберите свой адаптер"
+            self.finishDiscovery(state: .finished)
+            self.setDiagnostic(.discoveryFinished(count: self.devices.count),
+                               self.devices.isEmpty ? "Устройства не найдены. Проверьте питание и BLE." : "Выберите свой адаптер")
         }
+        updateDiscoveryForManagerState()
+    }
+
+    /// Call when the discovery screen is dismissed. It never stops a selection scan.
+    func cancelDiscovery() {
+        guard discovering else { return }
+        finishDiscovery(state: .idle)
+        setDiagnostic(.discoveryCancelled, "Поиск остановлен")
+    }
+
+    private func finishDiscovery(state: BLEScanState) {
+        guard discovering else { return }
+        discovering = false
+        scanDeadline?.cancel()
+        scanDeadline = nil
+        if !scanningForSelection { manager?.stopScan() }
+        scanState = state
     }
 
     func connect() async throws {
         try Task.checkCancellation()
         guard !closed, selectedID != nil else { throw OBDError.adapter("Сначала выберите адаптер") }
         guard connectWaiter == nil && !ready else { throw OBDError.busy }
-        discovering = false
-        scanDeadline?.cancel()
-        scanDeadline = nil
-        manager?.stopScan()
+        finishDiscovery(state: .finished)
         ensureManager()
         let id = UUID()
         try await withTaskCancellationHandler {
@@ -129,7 +191,7 @@ struct BLEDevice: Identifiable {
         }
     }
 
-    func disconnect() { fail(OBDError.disconnected) }
+    func disconnect() { fail(OBDError.disconnected, detail: .disconnected) }
 
     func exchange(_ command: String, timeout: TimeInterval) async throws -> String {
         try Task.checkCancellation()
@@ -158,7 +220,7 @@ struct BLEDevice: Identifiable {
 
     private func cancelOperation(_ id: UUID) {
         guard operationID == id else { return }
-        fail(CancellationError())
+        fail(CancellationError(), detail: .cancelled)
     }
 
     private func ensureManager() {
@@ -166,9 +228,35 @@ struct BLEDevice: Identifiable {
     }
 
     private func startScanIfPossible() {
-        guard let manager, manager.state == .poweredOn else { return }
-        let services: [CBUUID]? = allowsUnfilteredScan ? nil : Self.profiles.map(\.service)
+        guard let manager, manager.state == .poweredOn, discovering || scanningForSelection else { return }
+        let services: [CBUUID]? = discovering || allowsUnfilteredScan ? nil : Self.profiles.map(\.service)
         manager.scanForPeripherals(withServices: services, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+    }
+
+    private func updateDiscoveryForManagerState() {
+        guard discovering, let manager else { return }
+        switch manager.state {
+        case .poweredOn:
+            scanState = .scanning
+            startScanIfPossible()
+        case .unauthorized:
+            finishDiscovery(state: .unauthorized)
+            setDiagnostic(.unauthorized, "Разрешите Bluetooth в настройках iPhone")
+        case .poweredOff:
+            finishDiscovery(state: .poweredOff)
+            setDiagnostic(.poweredOff, "Bluetooth выключен")
+        case .unsupported:
+            finishDiscovery(state: .unavailable)
+            setDiagnostic(.unavailable, "BLE недоступен")
+        case .resetting:
+            finishDiscovery(state: .unavailable)
+            setDiagnostic(.resetting, "Bluetooth перезапускается. Повторите поиск")
+        case .unknown:
+            break
+        @unknown default:
+            finishDiscovery(state: .unavailable)
+            setDiagnostic(.unavailable, "BLE недоступен")
+        }
     }
 
     private func beginConnectionIfPossible() {
@@ -185,20 +273,27 @@ struct BLEDevice: Identifiable {
             } else {
                 scanForSelection()
             }
-        case .unauthorized: fail(OBDError.adapter("Разрешите Bluetooth в настройках iPhone"))
-        case .poweredOff: fail(OBDError.adapter("Bluetooth выключен"))
-        case .unsupported: fail(OBDError.adapter("BLE недоступен"))
-        case .unknown, .resetting: break
-        @unknown default: fail(OBDError.disconnected)
+        case .unauthorized:
+            fail(OBDError.adapter("Разрешите Bluetooth в настройках iPhone"), detail: .unauthorized)
+        case .poweredOff:
+            fail(OBDError.adapter("Bluetooth выключен"), detail: .poweredOff)
+        case .unsupported:
+            fail(OBDError.adapter("BLE недоступен"), detail: .unavailable)
+        case .resetting:
+            fail(OBDError.adapter("Bluetooth перезапускается. Повторите подключение"), detail: .resetting)
+        case .unknown:
+            break
+        @unknown default:
+            fail(OBDError.adapter("BLE недоступен"), detail: .unavailable)
         }
     }
 
     private func scanForSelection() {
-        guard connectWaiter != nil, !closed else { return }
+        guard connectWaiter != nil, !closed, let selectedID else { return }
         retrievalDeadline?.cancel()
         retrievalDeadline = nil
         scanningForSelection = true
-        diagnostic = "Поиск выбранного адаптера…"
+        setDiagnostic(.searchingForSelection(selectedID), "Поиск выбранного адаптера…")
         startScanIfPossible()
     }
 
@@ -209,7 +304,7 @@ struct BLEDevice: Identifiable {
         scanningForSelection = false
         peripheral = device
         device.delegate = self
-        diagnostic = "Подключение к выбранному устройству…"
+        setDiagnostic(.connecting(device.identifier), "Подключение к выбранному устройству…")
         if device.state == .connected {
             device.discoverServices(nil)
         } else {
@@ -247,7 +342,7 @@ struct BLEDevice: Identifiable {
         deadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             guard let self, !Task.isCancelled, self.operationID == id else { return }
-            self.fail(OBDError.timeout)
+            self.fail(OBDError.timeout, detail: .timeout)
         }
     }
 
@@ -273,11 +368,11 @@ struct BLEDevice: Identifiable {
         waiter.resume(returning: response)
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: Error, detail: BLEDiagnostic? = nil) {
         guard !closed else { return }
         closed = true
         ready = false
-        discovering = false
+        if discovering { finishDiscovery(state: .finished) }
         scanningForSelection = false
         operationID = nil
         deadline?.cancel()
@@ -305,7 +400,7 @@ struct BLEDevice: Identifiable {
         let response = responseWaiter
         connectWaiter = nil
         responseWaiter = nil
-        diagnostic = error.localizedDescription
+        setDiagnostic(detail ?? .failure(error.localizedDescription), error.localizedDescription)
         connection?.resume(throwing: error)
         response?.resume(throwing: error)
     }
@@ -313,7 +408,8 @@ struct BLEDevice: Identifiable {
     private func discoverNextProfile(on device: CBPeripheral) {
         guard !remainingProfiles.isEmpty else {
             let list = serviceUUIDs.isEmpty ? "нет" : serviceUUIDs.joined(separator: ", ")
-            fail(OBDError.adapter("Поддерживаемый GATT-профиль не найден. Сервисы: \(list)"))
+            fail(OBDError.adapter("Поддерживаемый GATT-профиль не найден. Сервисы: \(list)"),
+                 detail: .unsupportedProfile(services: serviceUUIDs))
             return
         }
         let (candidate, service) = remainingProfiles.removeFirst()
@@ -327,20 +423,28 @@ struct BLEDevice: Identifiable {
 extension BLETransport: @preconcurrency CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard central === manager, !closed else { return }
-        if central.state != .poweredOn && (ready || peripheral != nil) {
-            fail(OBDError.disconnected)
+        if discovering { updateDiscoveryForManagerState() }
+        if central.state != .poweredOn && (ready || peripheral != nil || scanningForSelection) {
+            switch central.state {
+            case .unauthorized:
+                fail(OBDError.adapter("Разрешите Bluetooth в настройках iPhone"), detail: .unauthorized)
+            case .poweredOff:
+                fail(OBDError.adapter("Bluetooth выключен"), detail: .poweredOff)
+            case .resetting:
+                fail(OBDError.adapter("Bluetooth перезапускается. Повторите подключение"), detail: .resetting)
+            case .unsupported:
+                fail(OBDError.adapter("BLE недоступен"), detail: .unavailable)
+            case .unknown:
+                break
+            case .poweredOn:
+                break
+            @unknown default:
+                fail(OBDError.adapter("BLE недоступен"), detail: .unavailable)
+            }
             return
-        }
-        if discovering {
-            if central.state == .poweredOn { startScanIfPossible() }
-            else if central.state == .unauthorized { diagnostic = "Разрешите Bluetooth в настройках iPhone" }
-            else if central.state == .poweredOff { diagnostic = "Bluetooth выключен" }
         }
         if scanningForSelection {
             if central.state == .poweredOn { startScanIfPossible() }
-            else if central.state == .unauthorized { fail(OBDError.adapter("Разрешите Bluetooth в настройках iPhone")) }
-            else if central.state == .poweredOff { fail(OBDError.adapter("Bluetooth выключен")) }
-            else if central.state == .unsupported { fail(OBDError.adapter("BLE недоступен")) }
         } else {
             beginConnectionIfPossible()
         }
@@ -354,13 +458,20 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
             return
         }
         guard discovering else { return }
-        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? device.name ?? "BLE-устройство"
-        if discoveredPeripherals[device.identifier] == nil {
-            discoveredPeripherals[device.identifier] = device
-            devices.append(BLEDevice(id: device.identifier, name: name, rssi: RSSI.intValue))
-            devices.sort {
-                $0.matchesVgateName == $1.matchesVgateName ? $0.rssi > $1.rssi : $0.matchesVgateName
-            }
+        let advertisedName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let peripheralName = device.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (advertisedName?.isEmpty == false ? advertisedName : peripheralName) ?? ""
+        let item = BLEDevice(id: device.identifier, name: name, rssi: RSSI.intValue)
+        guard extendedDiscovery || item.hasName else { return }
+        discoveredPeripherals[device.identifier] = device
+        if let index = devices.firstIndex(where: { $0.id == device.identifier }) {
+            devices[index] = item
+        } else {
+            devices.append(item)
+        }
+        devices.sort {
+            $0.matchesVgateName == $1.matchesVgateName ? $0.rssi > $1.rssi : $0.matchesVgateName
         }
     }
 
@@ -383,7 +494,7 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
         if retrievalDeadline != nil && connectWaiter != nil {
             abandonRetrievedDevice(device)
         } else {
-            fail(error ?? OBDError.disconnected)
+            fail(error ?? OBDError.disconnected, detail: error == nil ? .disconnected : nil)
         }
     }
 }
@@ -429,7 +540,8 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
         deadline?.cancel()
         deadline = nil
         operationID = nil
-        diagnostic = "BLE готов: \(profile?.service.uuidString ?? "")"
+        let service = profile?.service.uuidString ?? ""
+        setDiagnostic(.ready(service: service), "BLE готов")
         connectWaiter = nil
         continuation.resume()
     }

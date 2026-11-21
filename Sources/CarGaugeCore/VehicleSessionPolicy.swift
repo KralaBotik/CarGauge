@@ -2,10 +2,7 @@ import Foundation
 
 public enum VehicleSessionPolicy {
     public static let maximumBackgroundTime: TimeInterval = 30 * 60
-
-    public static func initialSource(hasSavedAdapter: Bool, launchesSimulator: Bool) -> DataSource {
-        hasSavedAdapter && !launchesSimulator ? .vehicle : .simulator
-    }
+    public static let maximumSessionTime: TimeInterval = 4 * 60 * 60
 }
 
 public struct VehicleRetryBudget: Sendable {

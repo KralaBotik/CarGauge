@@ -8,16 +8,16 @@ enum MeasurementPhase {
 }
 
 @MainActor final class DashboardModel: ObservableObject {
-    @Published private(set) var source: DataSource = .simulator
     @Published private(set) var coolant: Reading?
     @Published private(set) var supplementary: TelemetrySnapshot?
     @Published private(set) var history: [WarmupHistory.Point] = []
+    private(set) var tripStartedAt: Date?
     @Published private(set) var level: ThermalLevel = .normal
     @Published private(set) var phase: MeasurementPhase = .idle
     @Published private(set) var thresholds: ThermalThresholds
     @Published private(set) var status = "Ожидание запуска"
     @Published private(set) var isRunning = false
-    @Published private(set) var ble = BLETransport()
+    @Published private(set) var ble: BLETransport
     @Published private(set) var activityIsRunning = false
     @Published var presentationMessage: String?
     @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") == nil
@@ -38,10 +38,51 @@ enum MeasurementPhase {
     }
     var widgetContainerAvailable: Bool { presentation.groupIsAvailable }
     #endif
-    @Published var scenario: SimulationScenario
+    @Published private(set) var adapterStage = "Ожидание"
+    @Published private(set) var configuredName: String?
+    @Published private(set) var hasConfiguredAdapter: Bool
+    private var pendingAdapterID: UUID?
+    private var pendingAdapterName: String?
+
+    var source: DataSource {
+        #if DEBUG
+        if launchScenario != nil || previewUsesSamples { return .simulator }
+        #endif
+        return .vehicle
+    }
+
+    var connectionTitle: String {
+        if phase == .failed {
+            switch ble.diagnosticDetail {
+            case .poweredOff: return "Bluetooth выключен"
+            case .unauthorized: return "Нет доступа к Bluetooth"
+            case .unavailable: return "Bluetooth недоступен"
+            case .unsupportedProfile: return "Адаптер не поддерживается"
+            default: break
+            }
+        }
+        switch phase {
+        case .awaitingAdapter: return "Адаптер не настроен"
+        case .connecting: return pendingAdapterID == nil ? "Подключение…" : "Проверяем адаптер…"
+        case .streaming: return "Подключено"
+        case .retrying: return "Восстанавливаем связь…"
+        case .failed: return "Нет связи с автомобилем"
+        case .stopped: return "Измерения остановлены"
+        case .parked: return "Ожидание поездки"
+        case .idle: return canRetryConnection ? "Готово к подключению" : "Адаптер не настроен"
+        }
+    }
+    var canRetryConnection: Bool { adapterPreferences.preferredID != nil || source == .simulator }
+    var isCheckingSelection: Bool { pendingAdapterID != nil && isRunning }
 
     private let presentation = TelemetryPresentation()
+    private let adapterPreferences: AdapterPreferences
+    #if DEBUG
     private let launchScenario: SimulationScenario?
+    let discoveryFixture: Bool
+    private let waitingFixture: Bool
+    private var previewUsesSamples = false
+    #endif
     private var session: Task<Void, Never>?
     private var transport: (any OBDTransport)?
     private var runID = UUID()
@@ -58,12 +99,21 @@ enum MeasurementPhase {
     private static let thresholdsKey = "thermalThresholds"
 
     init() {
+        let preferences = AdapterPreferences(defaults: .standard)
+        adapterPreferences = preferences
+        configuredName = preferences.name
+        hasConfiguredAdapter = preferences.verifiedID != nil
+        ble = BLETransport(targetID: preferences.preferredID)
+        phase = preferences.preferredID == nil ? .awaitingAdapter : .idle
+        #if DEBUG
         let args = ProcessInfo.processInfo.arguments
-        let testScenario = args.firstIndex(of: "--simulation-scenario").flatMap { index in
+        launchScenario = args.firstIndex(of: "--simulation-scenario").flatMap { index in
             args.indices.contains(index + 1) ? SimulationScenario(rawValue: args[index + 1]) : nil
         }
-        launchScenario = testScenario
-        scenario = testScenario ?? .warmup
+        discoveryFixture = args.contains("--adapter-list-fixture")
+        waitingFixture = args.contains("--adapter-waiting-fixture")
+        if launchScenario != nil { hasConfiguredAdapter = true }
+        #endif
         let saved = UserDefaults.standard.data(forKey: Self.thresholdsKey)
             .flatMap { try? JSONDecoder().decode(ThermalThresholds.self, from: $0) }
         thresholds = saved ?? .standard
@@ -78,15 +128,21 @@ enum MeasurementPhase {
         sceneIsActive = active
         presentation.isForeground = active
         ble.allowsUnfilteredScan = active
+        if background { ble.cancelDiscovery() }
 
         if !started {
             guard active else { return }
             started = true
             presentation.cleanUpPreviousRun()
-            source = VehicleSessionPolicy.initialSource(hasSavedAdapter: ble.selectedID != nil,
-                                                        launchesSimulator: launchScenario != nil)
-            if source == .simulator || autoConnect { start() }
-            else { showManualConnection() }
+            #if DEBUG
+            if waitingFixture {
+                hasConfiguredAdapter = true
+                phase = .connecting
+                isRunning = true
+                return
+            }
+            #endif
+            if source == .simulator || (autoConnect && adapterPreferences.preferredID != nil) { start() }
             Task { await refreshNotificationPermission() }
             return
         }
@@ -94,27 +150,12 @@ enum MeasurementPhase {
         guard becameActive else { return }
         refreshActivityState()
         let sessionNeedsRecovery = !isRunning || (phase == .streaming && coolant?.isFresh(at: Date()) != true)
-        if source == .vehicle, autoConnect, !manuallyStopped,
-           sessionNeedsRecovery, phase != .parked || returningFromBackground {
+        if source == .vehicle, adapterPreferences.preferredID != nil,
+           autoConnect, !manuallyStopped, sessionNeedsRecovery, phase != .parked || returningFromBackground {
             start(preservingHistory: true)
         } else {
             startAutomaticActivityIfPossible()
         }
-    }
-
-    func switchSource(to newSource: DataSource) {
-        guard source != newSource else { return }
-        stopSession()
-        manuallyStopped = false
-        source = newSource
-        resetHistory()
-        if newSource == .simulator || (autoConnect && ble.selectedID != nil && sceneIsActive) { start() }
-        else { showManualConnection() }
-    }
-
-    private func showManualConnection() {
-        phase = ble.selectedID == nil ? .awaitingAdapter : .idle
-        status = "Выберите адаптер или подключитесь вручную"
     }
 
     func setThreshold(_ limit: ThermalThresholds.Limit, to value: Int) {
@@ -131,30 +172,50 @@ enum MeasurementPhase {
         level = monitor.update(coolant, at: Date())
     }
 
-    func setScenario(_ scenario: SimulationScenario) {
-        self.scenario = scenario
-        if source == .simulator && !manuallyStopped { start() }
-    }
-
     func selectDevice(_ id: UUID) {
-        guard ble.select(id) else { return }
+        guard !isRunning, ble.select(id) else { return }
+        pendingAdapterID = id
+        pendingAdapterName = ble.selectedName
         start()
     }
 
-    func discoverAdapters() {
-        guard source == .vehicle, sceneIsActive, !isRunning else { return }
+    func discoverAdapters(extended: Bool = false) {
+        guard source == .vehicle, sceneIsActive else { return }
+        #if DEBUG
+        if discoveryFixture { return }
+        #endif
+        guard !isCheckingSelection else { return }
+        if isRunning { stop() }
         if ble.isClosed { replaceBLE() }
-        ble.discover()
+        ble.discover(extended: extended)
+    }
+
+    func leaveAdapterSetup() {
+        ble.cancelDiscovery()
+        if isCheckingSelection { stop() }
+    }
+
+    func resetAdapter() {
+        pendingAdapterID = nil
+        pendingAdapterName = nil
+        adapterPreferences.clear()
+        stop()
+        resetHistory()
+        hasConfiguredAdapter = false
+        configuredName = nil
+        phase = .awaitingAdapter
+        status = "Выберите новый адаптер"
     }
 
     func start(preservingHistory: Bool = false) {
         let previousLevel = level
         let previousMonitor = monitor
+        let targetID = pendingAdapterID ?? adapterPreferences.preferredID
         stopSession(resetBLE: false)
         manuallyStopped = false
         attemptedAutoActivity = false
         if !preservingHistory { manuallyEndedActivity = false }
-        guard source == .simulator || ble.selectedID != nil else {
+        guard source == .simulator || targetID != nil else {
             phase = .awaitingAdapter
             status = "Сначала выберите BLE-адаптер"
             return
@@ -166,27 +227,26 @@ enum MeasurementPhase {
         } else {
             resetHistory()
         }
-        // Reuse the discovery manager on first connection. Replace a closed link before retrying.
-        if source == .vehicle && ble.isClosed { replaceBLE() }
+        if source == .vehicle && (ble.isClosed || ble.selectedID != targetID) { replaceBLE() }
         let id = runID
-        let currentSource = source
-        let currentScenario = scenario
         isRunning = true
         phase = .connecting
         status = "Подключение…"
 
         session = Task { [weak self] in
-            await self?.run(id: id, source: currentSource, scenario: currentScenario)
+            await self?.run(id: id, targetID: targetID)
         }
     }
 
     func stop() {
         manuallyStopped = true
+        pendingAdapterID = nil
+        pendingAdapterName = nil
         stopSession()
     }
 
     private func replaceBLE() {
-        let replacement = BLETransport()
+        let replacement = BLETransport(targetID: pendingAdapterID ?? adapterPreferences.preferredID)
         replacement.allowsUnfilteredScan = sceneIsActive
         ble = replacement
     }
@@ -204,6 +264,7 @@ enum MeasurementPhase {
         isRunning = false
         phase = .stopped
         status = "Измерение остановлено"
+        adapterStage = "Ожидание"
         coolant = nil
         supplementary = nil
         monitor = OverheatMonitor()
@@ -215,6 +276,7 @@ enum MeasurementPhase {
 
     private func resetHistory() {
         warmup = WarmupHistory()
+        tripStartedAt = nil
         history = []
     }
 
@@ -287,30 +349,59 @@ enum MeasurementPhase {
         activityWasAutomatic = false
     }
 
-    private func run(id: UUID, source: DataSource, scenario: SimulationScenario) async {
+    private func run(id: UUID, targetID: UUID?) async {
         var retryBudget = VehicleRetryBudget()
-        var simulatedBreak = scenario == .reconnect
+        let source = source
+        let startedAt = ContinuousClock.now
+        #if DEBUG
+        var simulatedBreak = launchScenario == .reconnect
+        #endif
         while !Task.isCancelled && id == runID {
-            let simulatedScenario: SimulationScenario = scenario == .reconnect
-                ? (simulatedBreak ? .disconnect : .warmup) : scenario
-            let link: any OBDTransport = source == .vehicle ? ble : SimulatedTransport(scenario: simulatedScenario)
+            let link: any OBDTransport
+            #if DEBUG
+            if let scenario = launchScenario {
+                let selected: SimulationScenario = scenario == .reconnect
+                    ? (simulatedBreak ? .disconnect : .warmup) : scenario
+                link = SimulatedTransport(scenario: selected)
+            } else {
+                link = ble
+            }
+            #else
+            link = ble
+            #endif
             transport = link
             let client = ELM327Client(transport: link)
             var engine = EngineIdleMonitor()
             do {
                 phase = .connecting
                 status = "Подключение…"
+                adapterStage = "Связь по Bluetooth"
                 try await link.connect()
+                guard !Task.isCancelled, id == runID else { return }
+                adapterStage = "Проверка ELM327 и ЭБУ"
                 try await client.initialize()
                 while !Task.isCancelled && id == runID {
+                    if source == .vehicle, startedAt.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumSessionTime) {
+                        pauseSession("Длительный сеанс завершён")
+                        return
+                    }
                     if source == .vehicle, backgroundBudgetExpired {
-                        park("Измерения в фоне приостановлены")
+                        pauseSession("Измерения в фоне приостановлены")
                         return
                     }
                     let reading = try await client.readCoolant()
                     guard !Task.isCancelled, id == runID else { return }
+                    if let targetID, source == .vehicle, adapterPreferences.verifiedID != targetID,
+                       adapterPreferences.confirm(id: targetID, name: pendingAdapterName ?? ble.selectedName,
+                                                  coolant: reading, at: .now) {
+                        configuredName = adapterPreferences.name
+                        hasConfiguredAdapter = true
+                    }
+                    pendingAdapterID = nil
+                    pendingAdapterName = nil
                     phase = .streaming
-                    status = source == .simulator ? "Симулятор подключён" : "ECU подключён"
+                    adapterStage = "ELM327 и ЭБУ отвечают"
+                    status = "Получены данные температуры"
                     accept(reading, source: source)
                     startAutomaticActivityIfPossible()
                     presentation.publish(coolant: reading, source: source, level: level)
@@ -319,9 +410,8 @@ enum MeasurementPhase {
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
                     retryBudget.didCompleteCycle()
-                    if (source == .vehicle || scenario == .engineOff),
-                       engine.shouldPark(after: snapshot.rpm, at: Date()) {
-                        park("Обороты двигателя упали до нуля")
+                    if engine.shouldPark(after: snapshot.rpm, at: Date()) {
+                        pauseSession("Обороты двигателя упали до нуля", engineStopped: true)
                         return
                     }
                     try await Task.sleep(for: .seconds(1))
@@ -333,13 +423,17 @@ enum MeasurementPhase {
                 coolant = nil
                 supplementary = nil
                 warmup.interrupt()
-                let shouldRetry = source == .vehicle ? autoConnect : simulatedBreak
+                #if DEBUG
+                let shouldRetry = source == .simulator ? simulatedBreak : autoConnect && pendingAdapterID == nil && targetID != nil
+                if source == .simulator { simulatedBreak = false }
+                #else
+                let shouldRetry = autoConnect && pendingAdapterID == nil && targetID != nil
+                #endif
                 guard shouldRetry,
                       let seconds = retryBudget.nextDelay(inForeground: sceneIsActive) else {
                     finishFailure(error)
                     return
                 }
-                simulatedBreak = false
                 phase = .retrying
                 status = "\(error.localizedDescription). Повтор через \(Int(seconds)) с"
                 let hadActivity = activityIsRunning
@@ -364,13 +458,15 @@ enum MeasurementPhase {
         backgroundSince.map { $0.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumBackgroundTime) } ?? false
     }
 
-    private func park(_ message: String) {
+    private func pauseSession(_ message: String, engineStopped: Bool = false) {
         stopSession()
-        phase = .parked
+        if engineStopped { phase = .parked }
         status = message
     }
 
     private func finishFailure(_ error: Error) {
+        pendingAdapterID = nil
+        pendingAdapterName = nil
         presentation.clearWidget()
         endActivity()
         phase = .failed
@@ -380,6 +476,7 @@ enum MeasurementPhase {
 
     private func accept(_ reading: Reading, source: DataSource) {
         coolant = reading
+        if tripStartedAt == nil { tripStartedAt = reading.timestamp }
         warmup.append(reading)
         history = warmup.points
         let oldLevel = monitor.level
@@ -400,22 +497,23 @@ enum MeasurementPhase {
 
 #if DEBUG
 extension DashboardModel {
-    static func preview(at now: Date, source: DataSource = .simulator, finalTemperature: Int = 91) -> DashboardModel {
+    static func preview(at now: Date, finalTemperature: Int = 91) -> DashboardModel {
         let model = DashboardModel()
-        model.source = source
+        model.previewUsesSamples = true
+        model.hasConfiguredAdapter = true
         model.thresholds = .standard
         model.monitor.apply(.standard)
         model.phase = .streaming
         model.isRunning = true
-        model.status = source == .simulator ? "Симулятор подключён" : "ECU подключён"
+        model.status = "Данные предпросмотра"
         for index in 0...23 {
             if (8...11).contains(index) { continue }
             let progress = Double(index) / 23
             let temperature = 34 + (Double(finalTemperature) - 34) * (1 - pow(1 - progress, 2))
-            model.accept(Reading(temperature.rounded(), at: now.addingTimeInterval(Double(index - 23) * 4)), source: source)
+            model.accept(Reading(temperature.rounded(), at: now.addingTimeInterval(Double(index - 23) * 4)), source: .simulator)
         }
         if let coolant = model.coolant {
-            model.supplementary = TelemetrySnapshot(source: source, coolant: coolant, rpm: Reading(846, at: now),
+            model.supplementary = TelemetrySnapshot(source: .simulator, coolant: coolant, rpm: Reading(846, at: now),
                                                    voltage: Reading(14.2, at: now), voltageSource: .ecu)
         }
         return model

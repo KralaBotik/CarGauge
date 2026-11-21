@@ -9,8 +9,8 @@ fi
 
 flavor="${1:-full}"
 case "$flavor" in
-  full) scheme=CarGauge; ipa=CarGauge-Full-unsigned.ipa ;;
-  basic) scheme=CarGaugeBasic; ipa=CarGauge-Basic-unsigned.ipa ;;
+  full) scheme=CarGauge; test_target=CarGaugeUITests; ipa=CarGauge-Full-unsigned.ipa ;;
+  basic) scheme=CarGaugeBasic; test_target=CarGaugeBasicUITests; ipa=CarGauge-Basic-unsigned.ipa ;;
   *) echo "Usage: scripts/ci-ios.sh [full|basic]" >&2; exit 2 ;;
 esac
 
@@ -41,11 +41,28 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
     2>&1 | tee "$output/CarGauge-Simulator.log"; then
     status=1
   fi
-  if [[ -d "$output/CarGauge-UI.xcresult" ]]; then
-    mkdir -p "$output/screenshots"
-    xcrun xcresulttool export attachments --path "$output/CarGauge-UI.xcresult" \
-      --output-path "$output/screenshots" || echo "Screenshots are available in the xcresult bundle."
+  if [[ "$status" -eq 0 ]]; then
+    if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
+      -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath "$derived" -parallel-testing-enabled NO \
+      -resultBundlePath "$output/CarGauge-ReleaseUI.xcresult" \
+      "-only-testing:$test_target/DashboardUITests/testReleaseIgnoresTestLaunchFlags" test \
+      2>&1 | tee "$output/CarGauge-ReleaseUI.log"; then
+      status=1
+    elif [[ "$flavor" == full ]]; then
+      if ! scripts/ci-upgrade.sh "$simulator" "$output" "$derived" 2>&1 | tee "$output/CarGauge-Upgrade.log"; then
+        status=1
+      fi
+    fi
   fi
+  for result in CarGauge-UI CarGauge-ReleaseUI CarGauge-ReleaseUpgrade; do
+    if [[ -d "$output/$result.xcresult" ]]; then
+      attachments="$output/screenshots/$result"
+      mkdir -p "$attachments"
+      xcrun xcresulttool export attachments --path "$output/$result.xcresult" \
+        --output-path "$attachments" || echo "Screenshots are available in the xcresult bundle."
+      python3 scripts/name_screenshots.py "$attachments" "$output/gallery"
+    fi
+  done
 else
   status=1
 fi

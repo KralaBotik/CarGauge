@@ -49,7 +49,7 @@ jobs:
     name: iOS (${{ matrix.flavor }})
     needs: core
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +61,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then
@@ -78,12 +79,22 @@ jobs:
             .artifacts/ios.*/*.log
             .artifacts/ios.*/CarGauge-UI.xcresult
             .artifacts/ios.*/CarGauge-Device.xcresult
+            .artifacts/ios.*/CarGauge-Release*.xcresult
             .artifacts/ios.*/screenshots
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
+      - name: Upload named usability screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: CarGauge-iPhone11-${{ matrix.flavor }}-screenshots
+          path: .artifacts/ios.*/gallery/*.png
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
       - name: Stage the validated IPA for release
-        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && github.ref == 'refs/heads/release/0.3.0-rc')) }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0'))) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: CarGauge-${{ matrix.flavor }}-candidate
@@ -98,7 +109,7 @@ jobs:
   publish-ipa:
     name: Publish Basic and Full IPA
     needs: ios
-    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && github.ref == 'refs/heads/release/0.3.0-rc')) }}
+    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

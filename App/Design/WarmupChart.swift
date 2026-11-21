@@ -10,6 +10,7 @@ struct WarmupChart: View {
     let thresholds: ThermalThresholds
     let compact: Bool
     var alert: ThermalLevel = .normal
+    var tripStartedAt: Date?
 
     var body: some View {
         Group {
@@ -31,27 +32,29 @@ struct WarmupChart: View {
     }
 
     private func plot(_ points: [WarmupHistory.Point], endingAt latest: WarmupHistory.Point) -> some View {
+        let origin = tripStartedAt ?? points.first?.reading.timestamp ?? latest.reading.timestamp
         let lastDate = latest.reading.timestamp
         let visible = compact ? points.filter { lastDate.timeIntervalSince($0.reading.timestamp) <= 300 } : points
-        let firstDate = visible.first?.reading.timestamp ?? lastDate
-        let windowStart = min(firstDate, lastDate.addingTimeInterval(-20))
-        let windowEnd = lastDate.addingTimeInterval(2)
+        let firstElapsed = max(0, (visible.first?.reading.timestamp ?? lastDate).timeIntervalSince(origin))
+        let lastElapsed = max(firstElapsed, lastDate.timeIntervalSince(origin))
+        let windowStart = max(0, min(firstElapsed, lastElapsed - 20))
+        let windowEnd = max(windowStart + 1, lastElapsed + 2)
+        let ticks = timeTicks(from: windowStart, through: windowEnd, maximumCount: compact ? 3 : 4)
         let temperatures = visible.map(\.reading.value)
         let low = floor((temperatures.min() ?? 0) / 10) * 10
         let high = max(low + 20, ceil((temperatures.max() ?? 0) / 10) * 10 + 2)
         let singletons = Set(Dictionary(grouping: visible, by: \.segment).values.filter { $0.count == 1 }.compactMap { $0.first?.id })
-        let timeFormat = compact ? Date.FormatStyle.dateTime.minute().second() : Date.FormatStyle.dateTime.hour().minute()
 
         return Chart {
             ForEach(visible) { point in
-                LineMark(x: .value("Время", point.reading.timestamp),
+                LineMark(x: .value("Время с начала сессии, с", point.reading.timestamp.timeIntervalSince(origin)),
                          y: .value("Температура, °C", point.reading.value),
                          series: .value("Участок", point.segment))
                     .foregroundStyle(palette.trace)
                     .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.linear)
                 if point.id == latest.id || singletons.contains(point.id) {
-                    PointMark(x: .value("Время", point.reading.timestamp),
+                    PointMark(x: .value("Время с начала сессии, с", point.reading.timestamp.timeIntervalSince(origin)),
                               y: .value("Температура, °C", point.reading.value))
                         .foregroundStyle(point.id == latest.id
                                          ? palette.tone(for: thresholds.state(at: point.reading.value, alert: alert))
@@ -69,10 +72,15 @@ struct WarmupChart: View {
         .chartXScale(domain: windowStart...windowEnd)
         .chartYScale(domain: low...high)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: compact ? 3 : 4)) {
+            AxisMarks(values: ticks) { value in
                 AxisGridLine().foregroundStyle(palette.line.opacity(0.55))
-                AxisValueLabel(format: timeFormat, anchor: .top, collisionResolution: .greedy)
-                    .foregroundStyle(palette.muted)
+                AxisValueLabel(anchor: .top, collisionResolution: .greedy) {
+                    if let seconds = value.as(Double.self) {
+                        Text(durationLabel(seconds))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(palette.muted)
+                    }
+                }
             }
         }
         .chartYAxis {
@@ -87,5 +95,19 @@ struct WarmupChart: View {
         }
         .frame(height: compact ? previewHeight : historyHeight)
         .accessibilityLabel("График температуры охлаждающей жидкости")
+    }
+
+    private func timeTicks(from start: Double, through end: Double, maximumCount: Int) -> [Double] {
+        let minimumStep = (end - start) / Double(maximumCount - 1)
+        let magnitude = pow(10, floor(log10(max(1, minimumStep))))
+        let step = [1.0, 2.0, 5.0, 10.0].map { $0 * magnitude }
+            .first(where: { $0 >= minimumStep }) ?? 10 * magnitude
+        let first = ceil(start / step) * step
+        return (0..<maximumCount).map { first + Double($0) * step }.filter { $0 <= end }
+    }
+
+    private func durationLabel(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 }
