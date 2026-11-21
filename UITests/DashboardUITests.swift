@@ -59,15 +59,19 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {
         let app = launch("warmup", appearance: "dark")
+        let stop = app.buttons["stop-measurement"]
+        XCTAssertTrue(stop.waitForExistence(timeout: simulatorResponseTimeout))
+        stop.tap()
         app.tabBars.buttons["Настройки"].tap()
         let reset = app.buttons["reset-thresholds"]
+        XCTAssertTrue(reset.waitForExistence(timeout: simulatorResponseTimeout))
         if reset.isEnabled { reset.tap() }
         let stepper = app.steppers["warning-threshold"]
-        XCTAssertTrue(stepper.waitForExistence(timeout: 5))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
         stepper.buttons.element(boundBy: 1).tap()
-        XCTAssertTrue(stepper.waitForTemperature(106))
+        XCTAssertTrue(stepper.waitForTemperature(106, timeout: simulatorResponseTimeout))
         reset.tap()
-        XCTAssertTrue(stepper.waitForTemperature(105))
+        XCTAssertTrue(stepper.waitForTemperature(105, timeout: simulatorResponseTimeout))
     }
 
     @MainActor func testSimulatorSurfacesOverheat() {
@@ -137,10 +141,10 @@ final class DashboardUITests: XCTestCase {
 }
 
 private extension XCUIElement {
-    @MainActor func waitForTemperature(_ degrees: Int) -> Bool {
+    @MainActor func waitForTemperature(_ degrees: Int, timeout: TimeInterval) -> Bool {
         let temperature = "\(degrees) °C"
         let predicate = NSPredicate(format: "exists == YES AND (value == %@ OR label CONTAINS %@)", temperature, temperature)
-        return wait(for: predicate, timeout: 5)
+        return wait(for: predicate, timeout: timeout)
     }
 
     @MainActor func waitForLabel(matching pattern: String, timeout: TimeInterval) -> Bool {
