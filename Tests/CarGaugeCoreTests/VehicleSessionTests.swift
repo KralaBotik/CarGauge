@@ -2,10 +2,7 @@ import CarGaugeCore
 import Foundation
 import Testing
 
-@Test func rememberedAdapterWinsOnColdLaunchAndRetriesAreBounded() {
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: false) == .vehicle)
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: true) == .simulator)
-    #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: false, launchesSimulator: false) == .simulator)
+@Test func vehicleRetriesAreBoundedAndStayInForeground() {
     var budget = VehicleRetryBudget()
     let delays = (0..<5).map { _ in budget.nextDelay(inForeground: true) }
     #expect(delays == [1, 2, 4, 8, nil])
@@ -56,6 +53,16 @@ import Testing
     buffer.reset()
     #expect(try buffer.append(Data("41057B>410".utf8)) == ["41057B"])
     #expect(buffer.hasPartialPayload)
+}
+
+@Test func separateNotificationsAfterThePromptAllowPaddingButRejectAPayload() throws {
+    var frame = ELMCommandFrame()
+    let partial = try frame.append(Data("41057B\r".utf8))
+    let prompt = try frame.append(Data(">".utf8))
+    let padding = try frame.append(Data("\r\n".utf8))
+    #expect(!partial && prompt && !padding)
+    #expect(frame.response == "41057B\r")
+    #expect(throws: OBDError.malformedResponse) { try frame.append(Data("41057B>".utf8)) }
 }
 
 @MainActor

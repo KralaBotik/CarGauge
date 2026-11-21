@@ -16,8 +16,8 @@ import SwiftUI
     }
 }
 
-enum GaugeTab: Hashable {
-    case instruments, history, diagnostics, settings
+private enum GaugeDestination: Hashable {
+    case history, settings, diagnostics
 }
 
 struct CarGaugeShell: View {
@@ -26,24 +26,46 @@ struct CarGaugeShell: View {
     @Binding var appearance: GaugeAppearance
     let isActive: Bool
     var previewDate: Date?
-    @State var tab: GaugeTab = .instruments
+    @State private var path: [GaugeDestination] = []
+    @State private var showsAdapterSetup = false
 
     var body: some View {
         let palette = GaugePalette(scheme: colorScheme)
-        TabView(selection: $tab) {
-            DashboardView(model: model, previewDate: previewDate, showHistory: { tab = .history },
-                          showDiagnostics: { tab = .diagnostics })
-                .tabItem { Label("Приборы", systemImage: "gauge.with.dots.needle.33percent") }
-                .tag(GaugeTab.instruments)
-            GaugeHistoryView(model: model)
-                .tabItem { Label("История", systemImage: "chart.xyaxis.line") }
-                .tag(GaugeTab.history)
-            GaugeDiagnosticsView(model: model)
-                .tabItem { Label("Диагностика", systemImage: "waveform.path.ecg") }
-                .tag(GaugeTab.diagnostics)
-            GaugeSettingsView(model: model, appearance: $appearance, isActive: isActive)
-                .tabItem { Label("Настройки", systemImage: "slider.horizontal.3") }
-                .tag(GaugeTab.settings)
+        NavigationStack(path: $path) {
+            DashboardView(model: model, previewDate: previewDate,
+                          showHistory: { path.append(.history) }, showAdapter: { showsAdapterSetup = true })
+                .navigationTitle("CarGauge")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button { path.append(.history) } label: {
+                            Label("Поездка", systemImage: "chart.xyaxis.line").labelStyle(.iconOnly)
+                        }
+                        .accessibilityIdentifier("history-nav")
+                        Button { path.append(.settings) } label: {
+                            Label("Настройки", systemImage: "gearshape").labelStyle(.iconOnly)
+                        }
+                        .accessibilityIdentifier("settings-nav")
+                    }
+                }
+                .navigationDestination(for: GaugeDestination.self) { destination in
+                    switch destination {
+                    case .history:
+                        GaugeHistoryView(model: model)
+                            .navigationTitle("Поездка")
+                    case .settings:
+                        GaugeSettingsView(model: model, appearance: $appearance, isActive: isActive,
+                                          showAdapter: { showsAdapterSetup = true },
+                                          showDiagnostics: { path.append(.diagnostics) })
+                            .navigationTitle("Настройки")
+                    case .diagnostics:
+                        GaugeDiagnosticsView(model: model, ble: model.ble)
+                            .navigationTitle("Диагностика")
+                    }
+                }
+        }
+        .sheet(isPresented: $showsAdapterSetup) {
+            GaugeAdapterSetupView(model: model)
         }
         .tint(palette.accent)
         .environment(\.gaugePalette, palette)
@@ -51,39 +73,22 @@ struct CarGaugeShell: View {
 }
 
 #if DEBUG
-#Preview("Приборы · тёмная") {
+#Preview("Первое открытие") {
+    CarGaugeShell(model: DashboardModel(), appearance: .constant(.light), isActive: true)
+        .preferredColorScheme(.light)
+}
+
+#Preview("Поездка · тёмная") {
     let now = Date.now
     CarGaugeShell(model: .preview(at: now), appearance: .constant(.dark), isActive: true, previewDate: now)
         .preferredColorScheme(.dark)
 }
 
-#Preview("Приборы · светлая") {
-    let now = Date.now
-    CarGaugeShell(model: .preview(at: now, source: .vehicle), appearance: .constant(.light), isActive: true, previewDate: now)
-        .preferredColorScheme(.light)
-}
-
 #Preview("Перегрев · крупный текст") {
     let now = Date.now
-    CarGaugeShell(model: .preview(at: now, finalTemperature: 118), appearance: .constant(.dark), isActive: true, previewDate: now)
+    CarGaugeShell(model: .preview(at: now, finalTemperature: 118), appearance: .constant(.dark),
+                  isActive: true, previewDate: now)
         .preferredColorScheme(.dark)
         .environment(\.dynamicTypeSize, .accessibility2)
-}
-
-#Preview("История") {
-    let now = Date.now
-    CarGaugeShell(model: .preview(at: now), appearance: .constant(.light), isActive: true, previewDate: now, tab: .history)
-        .preferredColorScheme(.light)
-}
-
-#Preview("Диагностика") {
-    let now = Date.now
-    CarGaugeShell(model: .preview(at: now), appearance: .constant(.dark), isActive: true, previewDate: now, tab: .diagnostics)
-        .preferredColorScheme(.dark)
-}
-
-#Preview("Настройки") {
-    CarGaugeShell(model: DashboardModel(), appearance: .constant(.dark), isActive: true, tab: .settings)
-        .preferredColorScheme(.dark)
 }
 #endif

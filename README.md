@@ -1,22 +1,21 @@
 # CarGauge
 
-Нативное приложение SwiftUI для iPhone. Показывает температуру охлаждающей жидкости Hyundai Elantra HD G4FC через OBD-II PID `0105`, обороты `010C` и напряжение. Для подключения к Vgate iCar Pro BLE 4.0 используется CoreBluetooth. До выбора адаптера при запуске открывается симулятор.
+CarGauge показывает температуру охлаждающей жидкости, обороты и напряжение через BLE-адаптер OBD-II. Целевая связка — Hyundai Elantra HD G4FC и Vgate iCar Pro BLE 4.0.
 
-На Linux нужен Swift 6.x и Python 3.9+.
+1. Вставьте адаптер в диагностический разъём и включите зажигание.
+2. Откройте CarGauge, нажмите **Найти адаптер**, разрешите Bluetooth и выберите своё устройство. CarGauge сохраняет его после первого ответа с температурой.
+3. Открывайте приложение перед поездкой. При включённом автоподключении достаточно сохранённого адаптера. **Поездка** открывает историю замеров, **Настройки** позволяют сменить или забыть адаптер и открыть диагностику.
+
+**Full** — рекомендуемый вариант для iPhone. Он включает Live Activity и WidgetKit. **Basic** предназначен для случаев, когда подпись Full с расширением не проходит. [Установка и обновление с Windows](docs/SIDELOADLY.md), [состояние App Groups и CarPlay](docs/PLATFORM.md).
+
+## Разработка
+
+SwiftUI и CoreBluetooth используются в приложении, Swift Package с ядром проверяется на Linux. Тестовый транспорт доступен в Debug и в CLI разработки. iOS Release получает показания только по BLE.
 
 ```bash
 swift test
-swift run cargauge-simulator warmup
-swift run cargauge-simulator overheat
-swift run cargauge-simulator noVoltagePID
-swift run cargauge-simulator disconnect
+swift run cargauge-simulator reconnect
 python3 scripts/validate_project.py
 ```
 
-Для первой поездки включите зажигание, выберите **Приборы → Автомобиль**, затем **Диагностика → Найти Vgate по Bluetooth** и выберите свой адаптер. При следующих запусках CarGauge использует сохранённый адаптер. **Настройки → Автоматически при запуске** также включает ограниченные повторы при обрыве. Кнопка **Остановить измерение** завершает текущий сеанс. В Full можно включить автоматическую Live Activity в **Настройки → Экран блокировки и CarPlay**. [Приборы и оформление](docs/DESIGN.md).
-
-GitHub Actions запускает Swift-тесты на Linux. На macOS он генерирует проект, запускает XCTest на iPhone Simulator и собирает два Release-варианта. После успешных проверок обоих вариантов на `main` или при push в `release/0.3.0-rc` артефакты `CarGauge-full-IPA` и `CarGauge-basic-IPA` содержат неподписанные IPA и файлы SHA-256. Снимки, логи и отчёты `.xcresult` хранятся 14 дней. [GitHub Actions](.github/workflows/ci.yml).
-
-Для первого теста на iPhone с бесплатным Apple ID используйте **CarGauge Basic**. Sideloadly на Windows подпишет его локально. Полный IPA включает WidgetKit и Live Activity. Для проверки общих данных подписывающий инструмент должен выдать приложению и виджету профили с одной App Group и сохранить соответствие bundle ID. Подробности и сценарии первой проверки находятся в [инструкции по установке](docs/SIDELOADLY.md).
-
-Минимальная версия приложения — iOS 18. WidgetKit и Live Activity доступны на iPhone. Их отображение в CarPlay поддерживается с iOS 26. На GitHub runner используется Xcode 26.6, а iOS 27.2 beta и Linux-магнитола входят в приёмку на устройстве. См. [ограничения платформы](docs/PLATFORM.md), [архитектуру](docs/ARCHITECTURE.md), [план приёмки](docs/PLAN.md) и [ревью](docs/REVIEW.md).
+На macOS CI запускает XCTest на iPhone 11, проверяет запуск Release с тестовыми аргументами и обновление Full 0.3.0 → 0.4.0 на том же симуляторе. CI сохраняет именованные скриншоты, результаты XCTest, Release IPA и SHA-256. Для устройства нужен iOS 18.0 или новее. Проверка физического Vgate и вывода CarPlay остаётся отдельной приёмкой. [Интерфейс и доступность](docs/DESIGN.md), [архитектура](docs/ARCHITECTURE.md), [ревью](docs/REVIEW.md).

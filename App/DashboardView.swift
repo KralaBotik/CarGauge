@@ -5,91 +5,156 @@ struct DashboardView: View {
     @ObservedObject var model: DashboardModel
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
-    var previewDate: Date?
+    var previewDate: Date? = nil
     let showHistory: () -> Void
-    let showDiagnostics: () -> Void
+    let showAdapter: () -> Void
 
     var body: some View {
         GaugePage {
-            HStack(alignment: .center, spacing: GaugeSpacing.small) {
-                GaugeHeading(title: "CarGauge", subtitle: "Hyundai Elantra HD · G4FC")
-                sessionButton
-            }
-            sourceSwitch
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let now = previewDate ?? context.date
-                VStack(spacing: GaugeSpacing.medium) {
-                    TemperatureInstrument(value: model.coolant?.gaugeValue(at: now), thresholds: model.thresholds,
-                                          alert: model.level, phase: model.phase, source: model.source)
-                    metricStrip(at: now)
-                }
-            }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    HStack(alignment: .firstTextBaseline) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("График прогрева").font(.headline).accessibilityAddTraits(.isHeader)
-                            Text("Последние 5 мин").font(.caption).foregroundStyle(palette.muted)
+            connectionStatus
+
+            if !model.hasConfiguredAdapter && !model.canRetryConnection && !model.isRunning && !isSimulation {
+                adapterOnboarding
+            } else {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let now = previewDate ?? context.date
+                    let coolant = model.phase == .parked ? nil : model.coolant?.gaugeValue(at: now)
+                    VStack(spacing: GaugeSpacing.medium) {
+                        if model.phase == .parked {
+                            parkedState
+                        } else if coolant == nil && model.history.isEmpty {
+                            waitingState
+                        } else {
+                            TemperatureInstrument(value: coolant, thresholds: model.thresholds,
+                                                  alert: model.level, phase: model.phase, source: model.source)
+                            metricStrip(at: now)
+                            if model.phase == .failed || model.phase == .stopped { retryButton }
                         }
-                        .accessibilityIdentifier("chart-preview")
-                        Spacer(minLength: GaugeSpacing.small)
-                        Button(action: showHistory) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.subheadline.weight(.semibold))
-                        }
-                        .buttonStyle(GaugeActionStyle())
-                        .accessibilityLabel("Открыть историю")
                     }
-                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: true, alert: model.level)
-                        .accessibilityIdentifier("warmup-plot")
+                }
+
+                if !model.history.isEmpty {
+                    chartPanel
                 }
             }
         }
         .accessibilityIdentifier("instruments-screen")
     }
 
-    private var needsAdapter: Bool { model.source == .vehicle && model.ble.selectedID == nil }
-
-    private var sessionButton: some View {
-        Button {
-            if model.isRunning { model.stop() }
-            else if needsAdapter { showDiagnostics() }
-            else { model.start() }
-        } label: {
-            Image(systemName: model.isRunning ? "pause.fill" : (needsAdapter ? "link" : "play.fill"))
-                .frame(width: 20)
-        }
-        .buttonStyle(GaugeActionStyle())
-        .accessibilityLabel(model.isRunning ? "Остановить измерение" : (needsAdapter ? "Выбрать адаптер" : "Начать измерение"))
-        .accessibilityIdentifier(model.isRunning ? "stop-measurement" : (needsAdapter ? "open-diagnostics" : "start-measurement"))
+    private var isSimulation: Bool {
+        #if DEBUG
+        return model.source == .simulator
+        #else
+        return false
+        #endif
     }
 
-    private var sourceSwitch: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 4))
+    private var connectionStatus: some View {
+        let (symbol, tone): (String, Color) = switch model.phase {
+        case .streaming: ("checkmark.circle.fill", palette.operating)
+        case .connecting, .retrying: ("dot.radiowaves.left.and.right", palette.accent)
+        case .failed: ("exclamationmark.circle", palette.warning)
+        case .parked, .stopped: ("pause.circle", palette.muted)
+        case .idle, .awaitingAdapter: ("link", palette.muted)
+        }
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.small))
+            : AnyLayout(HStackLayout(spacing: GaugeSpacing.small))
         return layout {
-            sourceButton(.simulator, label: "Симулятор", symbol: "flask")
-            sourceButton(.vehicle, label: "Автомобиль", symbol: "car.side")
+            GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
+                .accessibilityIdentifier("connection-status")
+            #if DEBUG
+            if isSimulation {
+                SourceIndicator(source: model.source)
+            }
+            #endif
         }
-        .padding(GaugeSpacing.xsmall)
-        .background(palette.panel, in: RoundedRectangle(cornerRadius: 15))
-        .overlay { RoundedRectangle(cornerRadius: 15).strokeBorder(palette.line).allowsHitTesting(false) }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func sourceButton(_ source: DataSource, label: String, symbol: String) -> some View {
-        let active = model.source == source
-        return Button {
-            model.switchSource(to: source)
-        } label: {
-            Label(label, systemImage: symbol)
-                .font(.subheadline.weight(active ? .semibold : .regular))
-                .foregroundStyle(active ? palette.accent : palette.muted)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .background(active ? palette.accentWash : Color.clear, in: RoundedRectangle(cornerRadius: 11))
-                .contentShape(Rectangle())
+    private var adapterOnboarding: some View {
+        GaugePanel(instrument: true) {
+            VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
+                Text("Подключите OBD-II адаптер")
+                    .font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                Text("Вставьте адаптер в диагностический разъём и включите зажигание. Затем выберите свой адаптер из списка.")
+                    .font(.body)
+                    .foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(action: showAdapter) {
+                    Label("Найти адаптер", systemImage: "link")
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                }
+                .buttonStyle(GaugeActionStyle(emphasized: true))
+                .accessibilityIdentifier("find-adapter")
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(active ? .isSelected : [])
-        .accessibilityIdentifier("source-\(source.rawValue)")
+    }
+
+    private var waitingState: some View {
+        GaugePanel(instrument: true) {
+            VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
+                Text(model.phase == .failed ? "Проверьте подключение" : "Ожидание первого замера")
+                    .font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                Text(model.phase == .failed
+                     ? "Проверьте адаптер и попробуйте подключиться снова."
+                     : "Показатели появятся после получения данных от автомобиля.")
+                    .foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.isRunning {
+                    ProgressView().accessibilityLabel("Подключаемся к адаптеру")
+                } else if model.canRetryConnection {
+                    retryButton
+                }
+            }
+        }
+    }
+
+    private var parkedState: some View {
+        GaugePanel(instrument: true) {
+            VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                Text("Автомобиль на стоянке")
+                    .font(.title2.bold())
+                    .accessibilityAddTraits(.isHeader)
+                Text("Измерения приостановлены. История замеров доступна ниже.")
+                    .foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Возобновить измерения") { model.start() }
+                    .buttonStyle(GaugeActionStyle())
+                    .accessibilityIdentifier("resume-measurements")
+            }
+        }
+    }
+
+    private var retryButton: some View {
+        Button("Повторить подключение") { model.start(preservingHistory: true) }
+            .buttonStyle(GaugeActionStyle(emphasized: true))
+            .accessibilityIdentifier("retry-connection")
+    }
+
+    private var chartPanel: some View {
+        GaugePanel {
+            VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("График прогрева")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer(minLength: GaugeSpacing.small)
+                    Button(action: showHistory) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(GaugeActionStyle())
+                    .accessibilityLabel("Открыть историю")
+                }
+                .accessibilityIdentifier("chart-preview")
+                WarmupChart(points: model.history, thresholds: model.thresholds, compact: true,
+                            alert: model.level, tripStartedAt: model.tripStartedAt)
+                    .accessibilityIdentifier("warmup-plot")
+            }
+        }
     }
 
     private func metricStrip(at now: Date) -> some View {
@@ -135,6 +200,7 @@ private struct GaugeMetric: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .accessibilityIdentifier(id)
+                .accessibilityHint("\(title), \(detail)")
             Text(detail).font(.caption).foregroundStyle(palette.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

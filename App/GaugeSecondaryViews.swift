@@ -7,13 +7,12 @@ struct GaugeHistoryView: View {
 
     var body: some View {
         GaugePage {
-            GaugeHeading(title: "История", subtitle: model.isRunning ? "Текущий сеанс" : "Последний сеанс")
-            SourceIndicator(source: model.source)
             GaugePanel {
                 VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
                     Text("Температура за сеанс").font(.headline)
                     Text("До 30 минут · пропуски видны на графике").font(.caption).foregroundStyle(palette.muted)
-                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: false, alert: model.level)
+                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: false,
+                                alert: model.level, tripStartedAt: model.tripStartedAt)
                 }
             }
             if let first = model.history.first, let last = model.history.last {
@@ -38,25 +37,19 @@ struct GaugeHistoryView: View {
 struct GaugeDiagnosticsView: View {
     @Environment(\.gaugePalette) private var palette
     @ObservedObject var model: DashboardModel
+    @ObservedObject var ble: BLETransport
 
     var body: some View {
         GaugePage {
-            GaugeHeading(title: "Диагностика", subtitle: "Связь и источник показаний")
-            SourceIndicator(source: model.source)
             GaugePanel {
                 VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
                     Text("Соединение").font(.headline)
+                    LabeledContent("Адаптер", value: model.configuredName ?? (model.hasConfiguredAdapter ? "Сохранён" : "Не настроен"))
+                    Text(ble.diagnostic).foregroundStyle(palette.muted)
+                    LabeledContent("Этап проверки", value: model.adapterStage)
                     Text(model.status)
                         .foregroundStyle(palette.muted)
                         .accessibilityIdentifier("diagnostic-status")
-                    if model.source == .vehicle {
-                        AdapterControls(ble: model.ble, isRunning: model.isRunning,
-                                        onDiscover: model.discoverAdapters, onSelect: model.selectDevice)
-                    } else {
-                        Text("В режиме симулятора Bluetooth не используется.")
-                            .font(.footnote)
-                            .foregroundStyle(palette.muted)
-                    }
                 }
                 .font(.subheadline)
             }
@@ -70,6 +63,19 @@ struct GaugeDiagnosticsView: View {
                 }
                 .font(.subheadline)
             }
+            #if !CARGAUGE_BASIC
+            GaugePanel {
+                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                    Text("Виджет").font(.headline)
+                    Text(model.widgetContainerAvailable
+                         ? "Приложение видит общий контейнер. Проверьте показания в самом виджете."
+                         : "Общий контейнер недоступен. Для виджета нужна подпись Full с App Groups.")
+                        .font(.subheadline)
+                        .foregroundStyle(palette.muted)
+                        .accessibilityIdentifier("widget-container-state")
+                }
+            }
+            #endif
         }
         .accessibilityIdentifier("diagnostics-screen")
     }
@@ -83,40 +89,40 @@ struct GaugeDiagnosticsView: View {
     }
 }
 
-private struct AdapterControls: View {
-    @Environment(\.gaugePalette) private var palette
-    @ObservedObject var ble: BLETransport
-    let isRunning: Bool
-    let onDiscover: () -> Void
-    let onSelect: (UUID) -> Void
-
-    var body: some View {
-        Text(ble.diagnostic).foregroundStyle(palette.muted)
-        if !isRunning {
-            Button("Найти Vgate по Bluetooth", action: onDiscover)
-                .buttonStyle(GaugeActionStyle(emphasized: true))
-                .accessibilityIdentifier("discover-adapter")
-            ForEach(ble.devices) { device in
-                Button {
-                    onSelect(device.id)
-                } label: {
-                    LabeledContent(device.name, value: "\(device.rssi) dBm")
-                }
-                .buttonStyle(GaugeActionStyle())
-            }
-        }
-    }
-}
-
 struct GaugeSettingsView: View {
     @Environment(\.gaugePalette) private var palette
     @ObservedObject var model: DashboardModel
     @Binding var appearance: GaugeAppearance
     let isActive: Bool
+    let showAdapter: () -> Void
+    let showDiagnostics: () -> Void
+    @State private var confirmsReset = false
 
     var body: some View {
         GaugePage {
-            GaugeHeading(title: "Настройки")
+            GaugePanel {
+                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                    Text("Адаптер OBD-II").font(.headline)
+                    if let name = model.configuredName {
+                        Text(name).font(.subheadline).foregroundStyle(palette.muted)
+                    }
+                    Button(model.hasConfiguredAdapter ? "Сменить адаптер" : "Найти адаптер", action: showAdapter)
+                        .buttonStyle(GaugeActionStyle())
+                        .accessibilityIdentifier("change-adapter")
+                    Toggle("Подключаться при открытии", isOn: $model.autoConnect)
+                        .tint(palette.operating)
+                        .accessibilityIdentifier("auto-connect")
+                    if model.isRunning {
+                        Button("Остановить измерения") { model.stop() }
+                            .buttonStyle(GaugeActionStyle())
+                            .accessibilityIdentifier("stop-measurement")
+                    }
+                    if model.canRetryConnection {
+                        Button("Забыть адаптер", role: .destructive) { confirmsReset = true }
+                            .accessibilityIdentifier("forget-adapter")
+                    }
+                }
+            }
             GaugePanel {
                 VStack(alignment: .leading, spacing: GaugeSpacing.small) {
                     Text("Оформление").font(.headline)
@@ -146,31 +152,11 @@ struct GaugeSettingsView: View {
             }
             GaugePanel {
                 VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Автомобиль").font(.headline)
-                    Toggle("Автоматически при запуске", isOn: $model.autoConnect)
-                        .tint(palette.operating)
-                        .accessibilityIdentifier("auto-connect")
-                    Button("Разрешить уведомления о температуре") {
+                    Text("Уведомления").font(.headline)
+                    Button("Разрешить предупреждения о температуре") {
                         Task { await model.requestWarningNotifications() }
                     }
                     .buttonStyle(GaugeActionStyle())
-                }
-            }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Симулятор").font(.headline)
-                    Picker("Сценарий", selection: Binding(get: { model.scenario }, set: { model.setScenario($0) })) {
-                        Text("Прогрев").tag(SimulationScenario.warmup)
-                        Text("Перегрев").tag(SimulationScenario.overheat)
-                        Text("Напряжение через ATRV").tag(SimulationScenario.noVoltagePID)
-                        Text("Обрыв связи").tag(SimulationScenario.disconnect)
-                        Text("Обрыв и восстановление").tag(SimulationScenario.reconnect)
-                        Text("Нет PID температуры").tag(SimulationScenario.missingCoolant)
-                        Text("Некорректная температура").tag(SimulationScenario.invalidCoolant)
-                        Text("Зависший адаптер").tag(SimulationScenario.hangingAdapter)
-                        Text("Остановка двигателя").tag(SimulationScenario.engineOff)
-                    }
-                    .accessibilityIdentifier("simulation-scenario")
                 }
             }
             #if !CARGAUGE_BASIC
@@ -180,12 +166,6 @@ struct GaugeSettingsView: View {
                     Toggle("Запускать Live Activity автоматически", isOn: $model.autoLiveActivity)
                         .tint(palette.operating)
                         .accessibilityIdentifier("auto-live-activity")
-                    if !model.widgetContainerAvailable {
-                        Text("Общий контейнер виджета недоступен. Проверьте подпись Full.")
-                            .font(.footnote)
-                            .foregroundStyle(palette.muted)
-                            .accessibilityIdentifier("unavailable-app-group")
-                    }
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Button(model.activityIsRunning ? "Завершить Live Activity" : "Начать Live Activity") {
                             model.toggleActivity()
@@ -197,11 +177,20 @@ struct GaugeSettingsView: View {
                 }
             }
             #endif
+            Button(action: showDiagnostics) {
+                Label("Диагностика", systemImage: "waveform.path.ecg")
+            }
+            .buttonStyle(GaugeActionStyle())
+            .accessibilityIdentifier("diagnostics-nav")
             if let message = model.presentationMessage {
                 Text(message).font(.footnote).foregroundStyle(palette.muted)
             }
         }
         .accessibilityIdentifier("settings-screen")
+        .confirmationDialog("Забыть сохранённый адаптер?", isPresented: $confirmsReset, titleVisibility: .visible) {
+            Button("Забыть адаптер", role: .destructive) { model.resetAdapter() }
+            Button("Отмена", role: .cancel) {}
+        }
     }
 
     private func thresholdStepper(_ limit: ThermalThresholds.Limit, title: String, id: String) -> some View {

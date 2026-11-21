@@ -32,8 +32,12 @@ enum WidgetSnapshotStore {
     }
 
     static func read() -> WidgetSnapshot? {
-        guard let file, let data = try? Data(contentsOf: file) else { return nil }
-        return try? JSONDecoder().decode(WidgetSnapshot.self, from: data)
+        guard let file, let data = try? Data(contentsOf: file),
+              let snapshot = try? JSONDecoder().decode(WidgetSnapshot.self, from: data) else { return nil }
+        #if !DEBUG
+        guard snapshot.source == .vehicle else { return nil }
+        #endif
+        return snapshot
     }
 
     @discardableResult static func write(_ snapshot: WidgetSnapshot) -> Bool {

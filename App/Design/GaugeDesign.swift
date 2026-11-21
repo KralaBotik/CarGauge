@@ -118,8 +118,6 @@ struct GaugePage<Content: View>: View {
         .scrollIndicators(.hidden)
         .background(palette.canvas.ignoresSafeArea())
         .foregroundStyle(palette.text)
-        .toolbarBackground(palette.canvas, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
     }
 }
 
@@ -170,18 +168,20 @@ struct GaugeStatus: View {
     }
 }
 
+#if DEBUG
 struct SourceIndicator: View {
     @Environment(\.gaugePalette) private var palette
     let source: DataSource
 
     var body: some View {
-        Label(source == .simulator ? "Симулятор" : "Автомобиль",
+        Label(source == .simulator ? "Тестовые данные" : "Автомобиль",
               systemImage: source == .simulator ? "flask" : "car.side")
             .font(.caption.weight(.semibold))
             .foregroundStyle(source == .simulator ? palette.accent : palette.muted)
             .accessibilityIdentifier("source-indicator")
     }
 }
+#endif
 
 struct GaugeActionStyle: ButtonStyle {
     @Environment(\.gaugePalette) private var palette

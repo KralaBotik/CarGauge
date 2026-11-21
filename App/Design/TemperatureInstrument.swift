@@ -54,7 +54,7 @@ struct TemperatureInstrument: View {
             .foregroundStyle(tone)
             .lineLimit(1)
             .minimumScaleFactor(0.55)
-            .accessibilityLabel(value == nil ? number : "\(number) °C")
+            .accessibilityLabel(value == nil ? "Нет свежих данных" : "\(number) °C")
             .accessibilityIdentifier("coolant-value")
     }
 
@@ -76,13 +76,13 @@ struct TemperatureInstrument: View {
             ("Нет данных · ранее высокая температура", "exclamationmark.triangle", palette.warning, "stale-temperature-alert")
         case nil:
             switch phase {
-            case .connecting: ("Подключение…", "dot.radiowaves.left.and.right", palette.accent, "connection-status")
-            case .retrying: ("Восстанавливаем связь…", "arrow.trianglehead.clockwise", palette.accent, "connection-status")
-            case .awaitingAdapter: ("Адаптер не выбран", "link", palette.muted, "connection-status")
-            case .failed where source == .vehicle: ("Ошибка подключения", "exclamationmark.circle", palette.warning, "connection-status")
-            case .stopped: ("Измерения остановлены", "pause.circle", palette.muted, "connection-status")
-            case .parked: ("Измерения приостановлены", "pause.circle", palette.muted, "connection-status")
-            default: ("Нет свежих данных", "circle.dotted", palette.muted, "connection-status")
+            case .connecting: ("Подключение…", "dot.radiowaves.left.and.right", palette.accent, "temperature-state")
+            case .retrying: ("Восстанавливаем связь…", "arrow.trianglehead.clockwise", palette.accent, "temperature-state")
+            case .awaitingAdapter: ("Адаптер не выбран", "link", palette.muted, "temperature-state")
+            case .failed where source == .vehicle: ("Ошибка подключения", "exclamationmark.circle", palette.warning, "temperature-state")
+            case .stopped: ("Измерения остановлены", "pause.circle", palette.muted, "temperature-state")
+            case .parked: ("Измерения приостановлены", "pause.circle", palette.muted, "temperature-state")
+            default: ("Нет свежих данных", "circle.dotted", palette.muted, "temperature-state")
             }
         }
     }
