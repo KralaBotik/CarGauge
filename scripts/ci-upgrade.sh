@@ -12,10 +12,14 @@ mkdir -p "$old"
 git archive "$base" | tar -xf - -C "$old"
 (cd "$old" && xcodegen generate --spec project.yml)
 xcodebuild -project "$old/CarGauge.xcodeproj" -scheme CarGauge -configuration Release \
-  -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath "$old/DerivedData" build
+  -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+  -derivedDataPath "$old/DerivedData" ONLY_ACTIVE_ARCH=YES build
 
 # Reuse only the disposable simulator created by CI. Install the old product first.
-xcrun simctl uninstall "$simulator" "$bundle"
+xcrun simctl bootstatus "$simulator" -b
+if xcrun simctl get_app_container "$simulator" "$bundle" data >/dev/null 2>&1; then
+  xcrun simctl uninstall "$simulator" "$bundle"
+fi
 old_app="$old/DerivedData/Build/Products/Release-iphonesimulator/CarGauge.app"
 new_app="$derived/Build/Products/Release-iphonesimulator/CarGauge.app"
 xcrun simctl install "$simulator" "$old_app"
@@ -59,6 +63,7 @@ assert "verifiedOBDAdapter" not in p
 print("VERIFIED: Full 0.3.0 -> 0.4.0 update preserved preferences and tentative adapter")
 PY
 xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
-  -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath "$derived" -parallel-testing-enabled NO \
+  -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+  -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
   -resultBundlePath "$output/CarGauge-ReleaseUpgrade.xcresult" \
   -only-testing:CarGaugeUITests/DashboardUITests/testReleaseUpgradeRetainsLegacyPreferences test

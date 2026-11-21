@@ -35,15 +35,16 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
     echo "iPhone 11 unavailable on $runtime; using the installed iPhone simulator"
   fi
   if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
-    -destination "platform=iOS Simulator,id=$simulator" \
-    -derivedDataPath "$derived" -parallel-testing-enabled NO \
+    -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+    -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
     -resultBundlePath "$output/CarGauge-UI.xcresult" test \
     2>&1 | tee "$output/CarGauge-Simulator.log"; then
     status=1
   fi
   if [[ "$status" -eq 0 ]]; then
     if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
-      -destination "platform=iOS Simulator,id=$simulator" -derivedDataPath "$derived" -parallel-testing-enabled NO \
+      -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+      -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
       -resultBundlePath "$output/CarGauge-ReleaseUI.xcresult" \
       "-only-testing:$test_target/DashboardUITests/testReleaseIgnoresTestLaunchFlags" test \
       2>&1 | tee "$output/CarGauge-ReleaseUI.log"; then
