@@ -7,9 +7,12 @@ import WidgetKit
 @MainActor final class TelemetryPresentation {
     private var activity: Activity<CarGaugeAttributes>?
     private var lifecycle: Task<Void, Never>?
+    private var lifecycleID: UUID?
     private var generation = 0
     private var startPending = false
+    private var pendingUpdateID: UUID?
     private var lastActivityUpdate: Date?
+    private var lastActivityLevel: ThermalLevel?
     private var lastWidgetWrite: Date?
     private var lastPublishedLevel: ThermalLevel?
     private var lastPublishedSource: DataSource?
@@ -23,8 +26,10 @@ import WidgetKit
     func cleanUpPreviousRun() {
         generation += 1
         startPending = false
+        pendingUpdateID = nil
         activity = nil
         lastActivityUpdate = nil
+        lastActivityLevel = nil
         let previous = Activity<CarGaugeAttributes>.activities
         enqueue {
             for item in previous { await item.end(nil, dismissalPolicy: .immediate) }
@@ -32,21 +37,25 @@ import WidgetKit
         clearWidget()
     }
 
-    func startActivity(coolant: Reading, source: DataSource, level: ThermalLevel,
+    func startActivity(source: DataSource,
+                       latestSample: @escaping @MainActor () -> (Reading, ThermalLevel)?,
                        onDeferredResult: @escaping @MainActor (Error?) -> Void) throws {
         guard isForeground else { throw PresentationError.needsForeground }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw PresentationError.activitiesDisabled }
-        guard coolant.isFresh(at: Date()) else { throw PresentationError.noFreshData }
         guard !hasActivity else { return }
 
         let session = generation
         if lifecycle == nil {
+            guard let (coolant, level) = latestSample(), coolant.isFresh(at: Date()) else {
+                throw PresentationError.noFreshData
+            }
             activity = try Activity.request(
                 attributes: CarGaugeAttributes(source: source),
                 content: content(for: coolant, level: level),
                 pushType: nil
             )
             lastActivityUpdate = coolant.timestamp
+            lastActivityLevel = level
         } else {
             // Wait for the previous Activity to finish before requesting another one.
             startPending = true
@@ -56,13 +65,16 @@ import WidgetKit
                 do {
                     guard self.isForeground else { throw PresentationError.needsForeground }
                     guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw PresentationError.activitiesDisabled }
-                    guard coolant.isFresh(at: Date()) else { throw PresentationError.noFreshData }
+                    guard let (coolant, level) = latestSample(), coolant.isFresh(at: Date()) else {
+                        throw PresentationError.noFreshData
+                    }
                     self.activity = try Activity.request(
                         attributes: CarGaugeAttributes(source: source),
                         content: self.content(for: coolant, level: level),
                         pushType: nil
                     )
                     self.lastActivityUpdate = coolant.timestamp
+                    self.lastActivityLevel = level
                     onDeferredResult(nil)
                 } catch { onDeferredResult(error) }
             }
@@ -72,17 +84,19 @@ import WidgetKit
     func endActivity() {
         generation += 1
         startPending = false
+        pendingUpdateID = nil
         let old = activity
         activity = nil
         lastActivityUpdate = nil
+        lastActivityLevel = nil
         if let old {
             enqueue { await old.end(nil, dismissalPolicy: .immediate) }
         }
     }
 
-    func publish(coolant: Reading, source: DataSource, level: ThermalLevel) async {
+    func publish(coolant: Reading, source: DataSource, level: ThermalLevel) {
         guard coolant.isFresh(at: Date()) else {
-            await markActivityStale()
+            markActivityStale()
             return
         }
         let changed = lastPublishedLevel != level || lastPublishedSource != source
@@ -98,32 +112,36 @@ import WidgetKit
             }
         }
 
+        let shouldUpdate = lastActivityLevel != level
+            || (lastActivityUpdate.map { coolant.timestamp.timeIntervalSince($0) >= 8 } ?? true)
+        guard shouldUpdate, hasActivity, pendingUpdateID == nil else { return }
         let session = generation
+        let id = UUID()
         let update = content(for: coolant, level: level)
-        let shouldUpdate = changed || (lastActivityUpdate.map { coolant.timestamp.timeIntervalSince($0) >= 8 } ?? true)
-        guard shouldUpdate, hasActivity else { return }
-        lastActivityUpdate = coolant.timestamp
-        let task = enqueue { [weak self] in
-            guard let self, self.generation == session, self.hasActivity, let activity = self.activity else { return }
+        pendingUpdateID = id
+        enqueue { [weak self] in
+            guard let self, self.pendingUpdateID == id else { return }
+            self.pendingUpdateID = nil
+            guard self.generation == session, self.hasActivity, let activity = self.activity,
+                  coolant.isFresh(at: Date()) else { return }
+            self.lastActivityUpdate = coolant.timestamp
+            self.lastActivityLevel = level
             await activity.update(update)
         }
-        await task.value
     }
 
-    func markActivityStale() async {
+    func markActivityStale() {
+        generation += 1
+        startPending = false
+        pendingUpdateID = nil
         // Clearing the snapshot also prevents an old reading appearing current in the widget.
         clearWidget()
         lastActivityUpdate = nil
-        if startPending {
-            generation += 1
-            startPending = false
-        }
         let session = generation
-        let task = enqueue { [weak self] in
+        enqueue { [weak self] in
             guard let self, self.generation == session, self.hasActivity, let activity = self.activity else { return }
             await activity.update(ActivityContent(state: activity.content.state, staleDate: .now))
         }
-        await task.value
     }
 
     func clearWidget() {
@@ -133,8 +151,7 @@ import WidgetKit
         if WidgetSnapshotStore.clear() { WidgetCenter.shared.reloadTimelines(ofKind: "CoolantSnapshot") }
     }
 
-    @discardableResult
-    private func enqueue(_ operation: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
+    private func enqueue(_ operation: @escaping @MainActor () async -> Void) {
         let previous = lifecycle
         let id = UUID()
         lifecycleID = id
@@ -147,10 +164,7 @@ import WidgetKit
             }
         }
         lifecycle = task
-        return task
     }
-
-    private var lifecycleID: UUID?
 
     private func content(for reading: Reading, level: ThermalLevel) -> ActivityContent<CarGaugeAttributes.ContentState> {
         let state = CarGaugeAttributes.ContentState(coolant: Int(reading.value), sampleDate: reading.timestamp, level: level)

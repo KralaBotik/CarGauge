@@ -32,7 +32,7 @@ jobs:
           mkdir -p .artifacts/core
           {
             swift test
-            for scenario in warmup overheat noVoltagePID disconnect reconnect missingCoolant invalidCoolant hangingAdapter; do
+            for scenario in warmup overheat noVoltagePID disconnect reconnect missingCoolant invalidCoolant hangingAdapter engineOff; do
               swift run cargauge-simulator "$scenario"
             done
           } 2>&1 | tee .artifacts/core/CarGauge-Core.log

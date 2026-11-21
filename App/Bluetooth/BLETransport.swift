@@ -438,6 +438,7 @@ extension BLETransport: @preconcurrency CBPeripheralDelegate {
         guard device === peripheral, characteristic === notifyCharacteristic, !closed else { return }
         if let error { fail(error); return }
         guard let data = characteristic.value, !data.isEmpty else { return }
+        if responseWaiter == nil && data.allSatisfy({ [0x09, 0x0A, 0x0D, 0x20].contains($0) }) { return }
         guard responseWaiter != nil, pendingWrite == nil, completedResponse == nil else {
             fail(OBDError.malformedResponse)
             return

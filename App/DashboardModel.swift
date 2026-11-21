@@ -47,7 +47,6 @@ enum MeasurementPhase {
     private var monitor = OverheatMonitor()
     private var warmup = WarmupHistory()
     private var started = false
-    private var hasBeenActive = false
     private var sceneIsActive = false
     private var backgroundSince: ContinuousClock.Instant?
     private var manuallyStopped = false
@@ -71,12 +70,10 @@ enum MeasurementPhase {
     }
 
     func sceneChanged(active: Bool, background: Bool) {
-        let enteringForeground = active && (!hasBeenActive || backgroundSince != nil)
+        let becameActive = active && !sceneIsActive
+        let returningFromBackground = active && backgroundSince != nil
         if background, backgroundSince == nil { backgroundSince = .now }
-        if active {
-            hasBeenActive = true
-            backgroundSince = nil
-        }
+        if active { backgroundSince = nil }
         sceneIsActive = active
         presentation.isForeground = active
         ble.allowsUnfilteredScan = active
@@ -93,10 +90,11 @@ enum MeasurementPhase {
             return
         }
 
-        guard enteringForeground else { return }
+        guard becameActive else { return }
         refreshActivityState()
+        let sessionNeedsRecovery = !isRunning || (phase == .streaming && coolant?.isFresh(at: Date()) != true)
         if source == .vehicle, autoConnect, !manuallyStopped,
-           !isRunning || (phase == .streaming && coolant?.isFresh(at: Date()) != true) {
+           sessionNeedsRecovery, phase != .parked || returningFromBackground {
             start(preservingHistory: true)
         } else {
             startAutomaticActivityIfPossible()
@@ -150,6 +148,7 @@ enum MeasurementPhase {
 
     func start(preservingHistory: Bool = false) {
         let previousLevel = level
+        let previousMonitor = monitor
         stopSession(resetBLE: false)
         manuallyStopped = false
         attemptedAutoActivity = false
@@ -162,6 +161,7 @@ enum MeasurementPhase {
         if preservingHistory {
             warmup.interrupt()
             level = previousLevel
+            monitor = previousMonitor
         } else {
             resetHistory()
         }
@@ -237,9 +237,13 @@ enum MeasurementPhase {
     }
 
     private func startActivity(automatically: Bool) {
-        guard sceneIsActive, let coolant else { return }
+        guard sceneIsActive, coolant != nil else { return }
+        let id = runID
         do {
-            try presentation.startActivity(coolant: coolant, source: source, level: level) { [weak self] error in
+            try presentation.startActivity(source: source) { [weak self] in
+                guard let self, self.runID == id, let coolant = self.coolant else { return nil }
+                return (coolant, self.level)
+            } onDeferredResult: { [weak self] error in
                 guard let self else { return }
                 self.refreshActivityState()
                 self.presentationMessage = error?.localizedDescription
@@ -283,7 +287,7 @@ enum MeasurementPhase {
     }
 
     private func run(id: UUID, source: DataSource, scenario: SimulationScenario) async {
-        var failures = 0
+        var retryBudget = VehicleRetryBudget()
         var simulatedBreak = scenario == .reconnect
         while !Task.isCancelled && id == runID {
             let simulatedScenario: SimulationScenario = scenario == .reconnect
@@ -292,7 +296,6 @@ enum MeasurementPhase {
             transport = link
             let client = ELM327Client(transport: link)
             var engine = EngineIdleMonitor()
-            var healthySamples = 0
             do {
                 phase = .connecting
                 status = "Подключение…"
@@ -309,17 +312,12 @@ enum MeasurementPhase {
                     status = source == .simulator ? "Симулятор подключён" : "ECU подключён"
                     accept(reading, source: source)
                     startAutomaticActivityIfPossible()
-                    await presentation.publish(coolant: reading, source: source, level: level)
-                    try Task.checkCancellation()
-                    guard id == runID else { return }
+                    presentation.publish(coolant: reading, source: source, level: level)
                     refreshActivityState()
                     let snapshot = try await client.readSupplementary(source: source, coolant: reading)
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
-                    if failures > 0 {
-                        healthySamples += 1
-                        if healthySamples >= VehicleSessionPolicy.healthySamplesBeforeReset { failures = 0 }
-                    }
+                    retryBudget.didCompleteCycle()
                     if (source == .vehicle || scenario == .engineOff),
                        engine.shouldPark(after: snapshot.rpm, at: Date()) {
                         park("Обороты двигателя упали до нуля")
@@ -334,18 +332,22 @@ enum MeasurementPhase {
                 coolant = nil
                 supplementary = nil
                 warmup.interrupt()
-                failures += 1
                 let shouldRetry = source == .vehicle ? autoConnect : simulatedBreak
                 guard shouldRetry,
-                      let seconds = VehicleSessionPolicy.retryDelay(afterConsecutiveFailures: failures,
-                                                                  inForeground: sceneIsActive) else {
+                      let seconds = retryBudget.nextDelay(inForeground: sceneIsActive) else {
                     finishFailure(error)
                     return
                 }
                 simulatedBreak = false
                 phase = .retrying
                 status = "\(error.localizedDescription). Повтор через \(Int(seconds)) с"
-                await presentation.markActivityStale()
+                let hadActivity = activityIsRunning
+                presentation.markActivityStale()
+                refreshActivityState()
+                if hadActivity, !activityIsRunning, activityWasAutomatic {
+                    attemptedAutoActivity = false
+                    activityWasAutomatic = false
+                }
                 do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
                 guard !Task.isCancelled, id == runID else { return }
                 if !sceneIsActive || (source == .vehicle && !autoConnect) {

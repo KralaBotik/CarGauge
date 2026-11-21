@@ -6,9 +6,24 @@ import Testing
     #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: false) == .vehicle)
     #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: true, launchesSimulator: true) == .simulator)
     #expect(VehicleSessionPolicy.initialSource(hasSavedAdapter: false, launchesSimulator: false) == .simulator)
-    #expect((1...5).map { VehicleSessionPolicy.retryDelay(afterConsecutiveFailures: $0, inForeground: true) }
-            == [1, 2, 4, 8, nil])
-    #expect(VehicleSessionPolicy.retryDelay(afterConsecutiveFailures: 1, inForeground: false) == nil)
+    var budget = VehicleRetryBudget()
+    let delays = (0..<5).map { _ in budget.nextDelay(inForeground: true) }
+    #expect(delays == [1, 2, 4, 8, nil])
+    var backgroundBudget = VehicleRetryBudget()
+    let backgroundDelay = backgroundBudget.nextDelay(inForeground: false)
+    #expect(backgroundDelay == nil)
+}
+
+@Test func shortPartialRecoveryDoesNotRenewTheRetryBudget() {
+    var budget = VehicleRetryBudget()
+    let first = budget.nextDelay(inForeground: true)
+    for _ in 0..<9 { budget.didCompleteCycle() }
+    let second = budget.nextDelay(inForeground: true)
+    for _ in 0..<10 { budget.didCompleteCycle() }
+    let renewed = budget.nextDelay(inForeground: true)
+    #expect(first == 1)
+    #expect(second == 2)
+    #expect(renewed == 1)
 }
 
 @Test func parkingDependsOnContinuousFreshZeroRPMFollowingMotion() {
