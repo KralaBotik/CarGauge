@@ -34,12 +34,21 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
   else
     echo "iPhone 11 unavailable on $runtime; using the installed iPhone simulator"
   fi
-  if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
-    -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
-    -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
-    -resultBundlePath "$output/CarGauge-UI.xcresult" test \
-    2>&1 | tee "$output/CarGauge-Simulator.log"; then
+  xcrun simctl bootstatus "$simulator" -b
+  run_debug_ui() {
+    local result="$1" log="$2"
+    xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
+      -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+      -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
+      -resultBundlePath "$output/$result.xcresult" test 2>&1 | tee "$output/$log"
+  }
+  if ! run_debug_ui CarGauge-UI CarGauge-Simulator.log; then
     status=1
+    if python3 scripts/xctest_simulator_failure.py "$output/CarGauge-Simulator.log"; then
+      echo "Retrying once after an XCTest automation failure. Initial logs and results are retained."
+      xcrun simctl bootstatus "$simulator" -b
+      if run_debug_ui CarGauge-UIRetry CarGauge-Simulator-Retry.log; then status=0; fi
+    fi
   fi
   if [[ "$status" -eq 0 ]]; then
     if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
@@ -55,7 +64,7 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
       fi
     fi
   fi
-  for result in CarGauge-UI CarGauge-ReleaseUI CarGauge-ReleaseUpgrade; do
+  for result in CarGauge-UI CarGauge-UIRetry CarGauge-ReleaseUI CarGauge-ReleaseUpgrade; do
     if [[ -d "$output/$result.xcresult" ]]; then
       attachments="$output/screenshots/$result"
       mkdir -p "$attachments"

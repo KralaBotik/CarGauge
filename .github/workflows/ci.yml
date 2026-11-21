@@ -77,7 +77,7 @@ jobs:
           name: CarGauge-iOS-${{ matrix.flavor }}-diagnostics
           path: |
             .artifacts/ios.*/*.log
-            .artifacts/ios.*/CarGauge-UI.xcresult
+            .artifacts/ios.*/CarGauge-UI*.xcresult
             .artifacts/ios.*/CarGauge-Device.xcresult
             .artifacts/ios.*/CarGauge-Release*.xcresult
             .artifacts/ios.*/screenshots
