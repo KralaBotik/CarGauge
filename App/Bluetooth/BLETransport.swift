@@ -70,6 +70,8 @@ enum BLEDiagnostic: Equatable {
     @Published private(set) var selectedID: UUID?
     private var selectedName: String?
     var connectedName: String? { selectedName ?? BLEAdvertisementName.clean(peripheral?.name) }
+    var radioDidPowerOn: (@MainActor () -> Void)?
+    var radioIsPoweredOn: Bool { manager?.state == .poweredOn }
 
     /// Enables unfiltered scans for a selected UUID only in the foreground.
     /// Discovery itself is always unfiltered and must be started by the user.
@@ -228,8 +230,7 @@ enum BLEDiagnostic: Equatable {
 
     func exchange(_ command: String, timeout: TimeInterval) async throws -> String {
         try Task.checkCancellation()
-        let allowed = ELM327Client.initializationCommands + OBDPID.allCases.map(\.rawValue) + ["ATRV"]
-        guard allowed.contains(command) else { throw OBDError.unsupported }
+        guard ELM327Client.allowedCommands.contains(command) else { throw OBDError.unsupported }
         guard ready, !closed, peripheral?.state == .connected else { throw OBDError.disconnected }
         guard responseWaiter == nil else { throw OBDError.busy }
         let id = UUID()
@@ -425,7 +426,8 @@ enum BLEDiagnostic: Equatable {
             peripheral.delegate = nil
             manager?.cancelPeripheralConnection(peripheral)
         }
-        manager?.delegate = nil
+        // A powered-off manager can report the next radio-on edge without scanning.
+        if detail != .poweredOff { manager?.delegate = nil }
         discoveredPeripherals.removeAll()
         advertisementNames.removeAll()
         discoveryRSSI.removeAll()
@@ -462,7 +464,11 @@ enum BLEDiagnostic: Equatable {
 
 extension BLETransport: @preconcurrency CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        guard central === manager, !closed else { return }
+        guard central === manager else { return }
+        if closed {
+            if diagnosticDetail == .poweredOff, central.state == .poweredOn { radioDidPowerOn?() }
+            return
+        }
         if discovering { updateDiscoveryForManagerState() }
         if central.state != .poweredOn && (ready || peripheral != nil || scanningForSelection) {
             switch central.state {

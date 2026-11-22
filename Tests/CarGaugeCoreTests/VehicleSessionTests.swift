@@ -166,3 +166,11 @@ import Testing
     let parked = engine.shouldPark(after: Reading(0, at: start + 31), at: start + 31)
     #expect(parked)
 }
+
+@Test func backgroundPollingUsesFewerWakeupsAndRespectsFreshness() {
+    let foreground = VehicleSessionPolicy.pollInterval(inBackground: false)
+    let background = VehicleSessionPolicy.pollInterval(inBackground: true)
+    #expect(foreground == .seconds(1))
+    #expect(background == .seconds(2))
+    #expect(VehicleSessionPolicy.maximumBackgroundTime < VehicleSessionPolicy.maximumSessionTime)
+}

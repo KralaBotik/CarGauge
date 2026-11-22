@@ -13,6 +13,9 @@ public struct SupplementaryTimeout: LocalizedError, Sendable {
 
 @MainActor public final class ELM327Client {
     public static let initializationCommands = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"]
+    public static let allowedCommands = Set(initializationCommands + OBDPID.allCases.map(\.rawValue)
+                                            + OBDSupportPage.allCases.map(\.rawValue) + ["ATRV"])
+
     private let transport: any OBDTransport
     private var voltageSource: VoltageSource = .ecu
     private var rpmSupported = true
@@ -59,6 +62,21 @@ public struct SupplementaryTimeout: LocalizedError, Sendable {
         let value = try await read(.coolant)
         try Task.checkCancellation()
         return Reading(value, at: Date())
+    }
+
+    /// Discovery is optional and may report nothing on healthy cars. A timed-out request
+    /// still invalidates the link, so transport failures are propagated to the session.
+    public func probeSupport(_ page: OBDSupportPage) async throws -> OBDSupportMask? {
+        try beginSequence()
+        defer { sequenceInProgress = false }
+        let response = try await transport.exchange(page.rawValue, timeout: 2)
+        try Task.checkCancellation()
+        do {
+            return try OBDDecoder.supportMask(page, response: response)
+        } catch is OBDError {
+            // Framing succeeded; an ECU or a clone can still reject just the mask query.
+            return nil
+        }
     }
 
     /// Coolant is published first by the caller; slow optional sensors never hide it.

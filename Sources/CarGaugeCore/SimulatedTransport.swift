@@ -51,6 +51,8 @@ public enum SimulationScenario: String, CaseIterable, Sendable {
         switch command {
         case "ATZ": return "ELM327 v2.3\r>"
         case "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0": return "OK\r>"
+        case "0100": return "410008100001\r>"
+        case "0140": return scenario == .noVoltagePID ? "414000000000\r>" : "414040000000\r>"
         case "0105":
             sample += 1
             if (scenario == .disconnect || scenario == .reconnect) && sample > 6 {

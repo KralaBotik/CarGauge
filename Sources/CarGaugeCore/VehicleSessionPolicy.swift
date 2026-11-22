@@ -3,6 +3,10 @@ import Foundation
 public enum VehicleSessionPolicy {
     public static let maximumBackgroundTime: TimeInterval = 30 * 60
     public static let maximumSessionTime: TimeInterval = 4 * 60 * 60
+
+    public static func pollInterval(inBackground: Bool) -> Duration {
+        inBackground ? .seconds(2) : .seconds(1)
+    }
 }
 
 public struct VehicleRetryBudget: Sendable {

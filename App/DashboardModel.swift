@@ -42,6 +42,12 @@ enum MeasurementPhase {
     var widgetContainerAvailable: Bool { presentation.groupIsAvailable }
     #endif
     @Published private(set) var adapterStage = "Ожидание"
+    @Published private var supportResponses: [OBDSupportPage: String] = [:]
+    var pidSupportSummary: String {
+        OBDSupportPage.allCases.map { page in
+            "\(page.rawValue): \(supportResponses[page] ?? "ещё не проверено")"
+        }.joined(separator: " · ")
+    }
     @Published private(set) var configuredName: String?
     @Published private(set) var hasConfiguredAdapter: Bool
     private var pendingAdapterID: UUID?
@@ -123,6 +129,7 @@ enum MeasurementPhase {
             .flatMap { try? JSONDecoder().decode(ThermalThresholds.self, from: $0) }
         thresholds = saved ?? .standard
         monitor.apply(thresholds)
+        observeRadioPower()
     }
 
     func sceneChanged(active: Bool, background: Bool) {
@@ -134,7 +141,17 @@ enum MeasurementPhase {
         sceneIsActive = active
         presentation.isForeground = active
         ble.allowsUnfilteredScan = active
-        if background { discoveryBLE.cancelDiscovery() }
+        if background {
+            discoveryBLE.cancelDiscovery()
+            if source == .vehicle, isRunning, phase == .connecting || phase == .retrying {
+                if pendingAdapterID != nil {
+                    pendingAdapterID = nil
+                    pendingAdapterName = nil
+                    adapterSetupMessage = "Проверка прервана. Обновите список и выберите адаптер снова."
+                }
+                pauseSession("Подключение приостановлено")
+            }
+        }
 
         if !started {
             guard active else { return }
@@ -190,6 +207,7 @@ enum MeasurementPhase {
         adapterSetupMessage = nil
         ble = discoveryBLE
         ble.allowsUnfilteredScan = sceneIsActive
+        observeRadioPower()
         discoveryBLE = BLETransport()
         start(preservingHistory: true)
     }
@@ -232,6 +250,7 @@ enum MeasurementPhase {
         hasConfiguredAdapter = false
         configuredName = nil
         phase = .awaitingAdapter
+        supportResponses = [:]
         status = "Выберите новый адаптер"
     }
 
@@ -241,6 +260,7 @@ enum MeasurementPhase {
         let targetID = pendingAdapterID ?? adapterPreferences.preferredID
         stopSession(resetBLE: false)
         manuallyStopped = false
+        supportResponses = [:]
         attemptedAutoActivity = false
         if !preservingHistory { manuallyEndedActivity = false }
         guard source == .simulator || targetID != nil else {
@@ -277,6 +297,22 @@ enum MeasurementPhase {
         let replacement = BLETransport(targetID: pendingAdapterID ?? adapterPreferences.preferredID)
         replacement.allowsUnfilteredScan = sceneIsActive
         ble = replacement
+        observeRadioPower()
+    }
+
+    private func observeRadioPower() {
+        let observedLink = ble
+        observedLink.radioDidPowerOn = { [weak self, weak observedLink] in
+            guard let self, let observedLink, ble === observedLink else { return }
+            recoverAfterRadioPowerOn()
+        }
+    }
+
+    private func recoverAfterRadioPowerOn() {
+        guard phase == .failed, !isRunning, sceneIsActive, autoConnect, !manuallyStopped,
+              !isAdapterSetupOpen, source == .vehicle, adapterPreferences.preferredID != nil,
+              ble.diagnosticDetail == .poweredOff, ble.radioIsPoweredOn else { return }
+        start(preservingHistory: true)
     }
 
     private func stopSession(resetBLE: Bool = true) {
@@ -387,6 +423,7 @@ enum MeasurementPhase {
         let startedAt = ContinuousClock.now
         var engine = EngineIdleMonitor()
         var skippedSensors: Set<SupplementarySensor> = []
+        var pendingSupportPages = OBDSupportPage.allCases[...]
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
         var engineFixtureTime = Date(timeIntervalSinceReferenceDate: 0)
@@ -467,15 +504,23 @@ enum MeasurementPhase {
                         pollDelay = .milliseconds(150)
                     } else {
                         engineSample = (snapshot.rpm, .now)
-                        pollDelay = .seconds(1)
+                        pollDelay = VehicleSessionPolicy.pollInterval(inBackground: backgroundSince != nil)
                     }
                     #else
                     engineSample = (snapshot.rpm, .now)
-                    pollDelay = .seconds(1)
+                    pollDelay = VehicleSessionPolicy.pollInterval(inBackground: backgroundSince != nil)
                     #endif
                     if engine.shouldPark(after: engineSample.rpm, at: engineSample.at) {
                         pauseSession("Обороты двигателя упали до нуля", engineStopped: true)
                         return
+                    }
+                    if source == .vehicle, sceneIsActive, engineSample.rpm?.value != 0,
+                       let page = pendingSupportPages.popFirst() {
+                        // Probe one mask after useful direct measurements; never gate a PID on a mask bit.
+                        supportResponses[page] = "нет надёжного ответа"
+                        let mask = try await client.probeSupport(page)
+                        guard !Task.isCancelled, id == runID else { return }
+                        if let mask { supportResponses[page] = String(format: "%08X", mask.bits) }
                     }
                     try await Task.sleep(for: pollDelay)
                 }
@@ -543,6 +588,7 @@ enum MeasurementPhase {
         phase = .failed
         status = "Нет данных. \(error.localizedDescription)"
         isRunning = false
+        recoverAfterRadioPowerOn()
     }
 
     private func accept(_ reading: Reading, source: DataSource) {
