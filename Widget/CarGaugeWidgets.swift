@@ -13,6 +13,7 @@ import WidgetKit
 private struct CoolantEntry: TimelineEntry {
     let date: Date
     let snapshot: WidgetSnapshot?
+    let containerIsAvailable: Bool
 
     var current: WidgetSnapshot? {
         snapshot.flatMap { date < $0.expiration && date >= $0.sampleDate.addingTimeInterval(-1) ? $0 : nil }
@@ -20,20 +21,24 @@ private struct CoolantEntry: TimelineEntry {
 }
 
 private struct CoolantProvider: TimelineProvider {
-    func placeholder(in context: Context) -> CoolantEntry { CoolantEntry(date: .now, snapshot: nil) }
+    func placeholder(in context: Context) -> CoolantEntry {
+        CoolantEntry(date: .now, snapshot: nil, containerIsAvailable: true)
+    }
 
     func getSnapshot(in context: Context, completion: @escaping (CoolantEntry) -> Void) {
-        completion(CoolantEntry(date: .now, snapshot: WidgetSnapshotStore.read()))
+        let containerIsAvailable = WidgetSnapshotStore.containerIsAvailable
+        completion(CoolantEntry(date: .now, snapshot: containerIsAvailable ? WidgetSnapshotStore.read() : nil, containerIsAvailable: containerIsAvailable))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CoolantEntry>) -> Void) {
         let now = Date()
-        let snapshot = WidgetSnapshotStore.read()
-        var entries = [CoolantEntry(date: now, snapshot: snapshot)]
+        let containerIsAvailable = WidgetSnapshotStore.containerIsAvailable
+        let snapshot = containerIsAvailable ? WidgetSnapshotStore.read() : nil
+        var entries = [CoolantEntry(date: now, snapshot: snapshot, containerIsAvailable: containerIsAvailable)]
         if let snapshot, snapshot.expiration > now {
-            entries.append(CoolantEntry(date: snapshot.expiration, snapshot: snapshot))
+            entries.append(CoolantEntry(date: snapshot.expiration, snapshot: snapshot, containerIsAvailable: containerIsAvailable))
         }
-        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(15 * 60))))
+        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(entries[0].current == nil ? 15 * 60 : 60))))
     }
 }
 
@@ -43,7 +48,11 @@ private struct CoolantWidget: Widget {
             VStack(alignment: .leading, spacing: 4) {
                 Label("ОЖ", systemImage: "thermometer.medium")
                     .font(.headline)
-                if let snapshot = entry.current {
+                if !entry.containerIsAvailable {
+                    Text("Нет доступа к App Group")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if let snapshot = entry.current {
                     Text("\(snapshot.temperature) °C")
                         .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .monospacedDigit()
@@ -58,9 +67,11 @@ private struct CoolantWidget: Widget {
                             .minimumScaleFactor(0.7)
                     }
                     if snapshot.source == .simulator { Text("Симулятор").font(.caption2) }
-                    Text("Замер в \(snapshot.sampleDate, style: .time)")
+                    Text("Последний замер: \(Text(snapshot.sampleDate, style: .relative)) назад")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 } else {
                     Text("Нет свежих данных")
                         .font(.subheadline)

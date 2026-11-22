@@ -18,6 +18,9 @@ enum MeasurementPhase {
     @Published private(set) var status = "Ожидание запуска"
     @Published private(set) var isRunning = false
     @Published private(set) var ble: BLETransport
+    @Published private(set) var discoveryBLE = BLETransport()
+    @Published private(set) var adapterSetupMessage: String?
+    @Published private(set) var completedAdapterSelection: UUID?
     @Published private(set) var activityIsRunning = false
     @Published var presentationMessage: String?
     @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") == nil
@@ -43,6 +46,8 @@ enum MeasurementPhase {
     @Published private(set) var hasConfiguredAdapter: Bool
     private var pendingAdapterID: UUID?
     private var pendingAdapterName: String?
+    private var isAdapterSetupOpen = false
+    private var resumeAfterAdapterSetup = false
 
     var source: DataSource {
         #if DEBUG
@@ -123,12 +128,13 @@ enum MeasurementPhase {
     func sceneChanged(active: Bool, background: Bool) {
         let becameActive = active && !sceneIsActive
         let returningFromBackground = active && backgroundSince != nil
+        let expiredInBackground = active && backgroundBudgetExpired
         if background, backgroundSince == nil { backgroundSince = .now }
         if active { backgroundSince = nil }
         sceneIsActive = active
         presentation.isForeground = active
         ble.allowsUnfilteredScan = active
-        if background { ble.cancelDiscovery() }
+        if background { discoveryBLE.cancelDiscovery() }
 
         if !started {
             guard active else { return }
@@ -149,9 +155,13 @@ enum MeasurementPhase {
 
         guard becameActive else { return }
         refreshActivityState()
+        Task { await refreshNotificationPermission() }
+        if expiredInBackground && source == .vehicle && isRunning && !isCheckingSelection {
+            pauseSession("Измерения в фоне приостановлены")
+        }
         let sessionNeedsRecovery = !isRunning || (phase == .streaming && coolant?.isFresh(at: Date()) != true)
-        if source == .vehicle, adapterPreferences.preferredID != nil,
-           autoConnect, !manuallyStopped, sessionNeedsRecovery, phase != .parked || returningFromBackground {
+        if source == .vehicle, adapterPreferences.preferredID != nil, !isAdapterSetupOpen,
+           autoConnect, !manuallyStopped, sessionNeedsRecovery, (phase != .parked || returningFromBackground) {
             start(preservingHistory: true)
         } else {
             startAutomaticActivityIfPossible()
@@ -173,26 +183,44 @@ enum MeasurementPhase {
     }
 
     func selectDevice(_ id: UUID) {
-        guard !isRunning, ble.select(id) else { return }
+        guard isAdapterSetupOpen, !isCheckingSelection, discoveryBLE.select(id) else { return }
+        resumeAfterAdapterSetup = isRunning || resumeAfterAdapterSetup
+        pendingAdapterName = discoveryBLE.selectedName
         pendingAdapterID = id
-        pendingAdapterName = ble.selectedName
-        start()
+        adapterSetupMessage = nil
+        ble = discoveryBLE
+        ble.allowsUnfilteredScan = sceneIsActive
+        discoveryBLE = BLETransport()
+        start(preservingHistory: true)
+    }
+
+    func openAdapterSetup() {
+        guard !isAdapterSetupOpen else { return }
+        isAdapterSetupOpen = true
+        adapterSetupMessage = nil
+        discoverAdapters()
     }
 
     func discoverAdapters(extended: Bool = false) {
-        guard source == .vehicle, sceneIsActive else { return }
+        guard isAdapterSetupOpen, sceneIsActive, !isCheckingSelection else { return }
         #if DEBUG
         if discoveryFixture { return }
         #endif
-        guard !isCheckingSelection else { return }
-        if isRunning { stop() }
-        if ble.isClosed { replaceBLE() }
-        ble.discover(extended: extended)
+        guard source == .vehicle else { return }
+        adapterSetupMessage = nil
+        discoveryBLE.discover(extended: extended)
     }
 
     func leaveAdapterSetup() {
-        ble.cancelDiscovery()
+        guard isAdapterSetupOpen else { return }
+        isAdapterSetupOpen = false
+        discoveryBLE.cancelDiscovery()
         if isCheckingSelection { stop() }
+        let resume = resumeAfterAdapterSetup
+        resumeAfterAdapterSetup = false
+        if resume, !isRunning, sceneIsActive, adapterPreferences.preferredID != nil {
+            start(preservingHistory: true)
+        }
     }
 
     func resetAdapter() {
@@ -307,19 +335,23 @@ enum MeasurementPhase {
                 guard let self, self.runID == id, let coolant = self.coolant else { return nil }
                 return (coolant, self.level)
             } onDeferredResult: { [weak self] error in
-                guard let self else { return }
+                guard let self, self.runID == id else { return }
                 self.refreshActivityState()
-                self.presentationMessage = error?.localizedDescription
-                if error != nil {
-                    self.activityWasAutomatic = false
-                    // A queued start may expire while the app is switching scenes.
-                    if !self.sceneIsActive { self.attemptedAutoActivity = false }
-                }
+                if let error { self.handleActivityStartFailure(error, automatic: automatically) }
             }
             activityWasAutomatic = automatically
             activityIsRunning = presentation.hasActivity
             presentationMessage = nil
         } catch {
+            handleActivityStartFailure(error, automatic: automatically)
+        }
+    }
+
+    private func handleActivityStartFailure(_ error: any Error, automatic: Bool) {
+        activityWasAutomatic = false
+        if automatic && TelemetryPresentation.isRetryableStartError(error) {
+            attemptedAutoActivity = false
+        } else {
             presentationMessage = error.localizedDescription
         }
     }
@@ -353,6 +385,8 @@ enum MeasurementPhase {
         var retryBudget = VehicleRetryBudget()
         let source = source
         let startedAt = ContinuousClock.now
+        var engine = EngineIdleMonitor()
+        var skippedSensors: Set<SupplementarySensor> = []
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
         var engineFixtureTime = Date(timeIntervalSinceReferenceDate: 0)
@@ -372,7 +406,6 @@ enum MeasurementPhase {
             #endif
             transport = link
             let client = ELM327Client(transport: link)
-            var engine = EngineIdleMonitor()
             do {
                 phase = .connecting
                 status = "Подключение…"
@@ -392,22 +425,31 @@ enum MeasurementPhase {
                     }
                     let reading = try await client.readCoolant()
                     guard !Task.isCancelled, id == runID else { return }
-                    if let targetID, source == .vehicle, adapterPreferences.verifiedID != targetID,
-                       adapterPreferences.confirm(id: targetID, name: pendingAdapterName ?? ble.selectedName,
-                                                  coolant: reading, at: .now) {
+                    let receivedAt = Date()
+                    guard reading.isFresh(at: receivedAt) else { throw OBDError.noData }
+                    let selectedNewAdapter = pendingAdapterID != nil
+                    if let targetID, source == .vehicle, adapterPreferences.verifiedID != targetID {
+                        guard adapterPreferences.confirm(id: targetID, name: pendingAdapterName ?? ble.selectedName,
+                                                         coolant: reading, at: receivedAt) else { throw OBDError.noData }
+                        if selectedNewAdapter {
+                            resetHistory()
+                            monitor = OverheatMonitor()
+                            monitor.apply(thresholds)
+                        }
                         configuredName = adapterPreferences.name
                         hasConfiguredAdapter = true
                     }
                     pendingAdapterID = nil
                     pendingAdapterName = nil
                     phase = .streaming
+                    if selectedNewAdapter { completedAdapterSelection = UUID() }
                     adapterStage = "ELM327 и ЭБУ отвечают"
                     status = "Получены данные температуры"
                     accept(reading, source: source)
                     startAutomaticActivityIfPossible()
                     presentation.publish(coolant: reading, source: source, level: level)
                     refreshActivityState()
-                    let snapshot = try await client.readSupplementary(source: source, coolant: reading)
+                    let snapshot = try await client.readSupplementary(source: source, coolant: reading, skipping: skippedSensors)
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
                     retryBudget.didCompleteCycle()
@@ -440,13 +482,17 @@ enum MeasurementPhase {
                 coolant = nil
                 supplementary = nil
                 warmup.interrupt()
+                engine.interrupt()
+                if let timeout = error as? SupplementaryTimeout {
+                    skippedSensors.insert(timeout.sensor)
+                }
                 #if DEBUG
                 let shouldRetry = source == .simulator ? simulatedBreak : autoConnect && pendingAdapterID == nil && targetID != nil
                 if source == .simulator { simulatedBreak = false }
                 #else
                 let shouldRetry = autoConnect && pendingAdapterID == nil && targetID != nil
                 #endif
-                guard shouldRetry,
+                guard shouldRetry, source == .simulator || ble.permitsAutomaticRetry,
                       let seconds = retryBudget.nextDelay(inForeground: sceneIsActive) else {
                     finishFailure(error)
                     return
@@ -482,8 +528,12 @@ enum MeasurementPhase {
     }
 
     private func finishFailure(_ error: Error) {
-        pendingAdapterID = nil
-        pendingAdapterName = nil
+        if pendingAdapterID != nil {
+            adapterSetupMessage = "Проверка не прошла. Проверьте питание и зажигание, затем обновите список."
+            pendingAdapterID = nil
+            pendingAdapterName = nil
+            replaceBLE()
+        }
         presentation.clearWidget()
         endActivity()
         phase = .failed

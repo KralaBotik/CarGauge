@@ -26,7 +26,7 @@ public struct VehicleRetryBudget: Sendable {
     }
 }
 
-/// Park only after seeing this session's engine run and then receiving fresh zero-RPM samples.
+/// Park on continuous fresh zero RPM. Give an ignition-only start more time for cranking.
 public struct EngineIdleMonitor: Sendable {
     private var hasRun = false
     private var firstZero: Date?
@@ -44,12 +44,16 @@ public struct EngineIdleMonitor: Sendable {
             clearZeroSamples()
             return false
         }
-        guard hasRun else { return false }
         if let previousZero, speed.timestamp <= previousZero { return false }
         if let previousZero, !Reading(0, at: previousZero).isFresh(at: speed.timestamp) { clearZeroSamples() }
         if firstZero == nil { firstZero = speed.timestamp }
         previousZero = speed.timestamp
-        return firstZero.map { speed.timestamp.timeIntervalSince($0) >= 15 } ?? false
+        let grace: TimeInterval = hasRun ? 15 : 45
+        return firstZero.map { speed.timestamp.timeIntervalSince($0) >= grace } ?? false
+    }
+
+    public mutating func interrupt() {
+        clearZeroSamples()
     }
 
     private mutating func clearZeroSamples() {

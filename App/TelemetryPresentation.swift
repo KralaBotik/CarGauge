@@ -9,27 +9,28 @@ import WidgetKit
     private var lifecycle: Task<Void, Never>?
     private var lifecycleID: UUID?
     private var generation = 0
-    private var startPending = false
+    private var deferredStartCompletion: (@MainActor (Error?) -> Void)?
     private var pendingUpdateID: UUID?
     private var lastActivityUpdate: Date?
     private var lastActivityLevel: ThermalLevel?
-    private var lastWidgetWrite: Date?
+    private var lastWidgetAttempt: Date?
+    private var lastWidgetReload: Date?
     private var lastPublishedLevel: ThermalLevel?
     private var lastPublishedSource: DataSource?
     var isForeground = false
     var groupIsAvailable: Bool { WidgetSnapshotStore.containerIsAvailable }
 
     var hasActivity: Bool {
-        startPending || activity?.activityState == .active || activity?.activityState == .stale
+        deferredStartCompletion != nil || activity?.activityState == .active || activity?.activityState == .stale
     }
 
     func cleanUpPreviousRun() {
         generation += 1
-        startPending = false
         pendingUpdateID = nil
         activity = nil
         lastActivityUpdate = nil
         lastActivityLevel = nil
+        cancelDeferredStart()
         let previous = Activity<CarGaugeAttributes>.activities
         enqueue {
             for item in previous { await item.end(nil, dismissalPolicy: .immediate) }
@@ -58,10 +59,10 @@ import WidgetKit
             lastActivityLevel = level
         } else {
             // Wait for the previous Activity to finish before requesting another one.
-            startPending = true
+            deferredStartCompletion = onDeferredResult
             enqueue { [weak self] in
-                guard let self, self.generation == session else { return }
-                self.startPending = false
+                guard let self, self.generation == session, let completion = self.deferredStartCompletion else { return }
+                self.deferredStartCompletion = nil
                 do {
                     guard self.isForeground else { throw PresentationError.needsForeground }
                     guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw PresentationError.activitiesDisabled }
@@ -75,20 +76,20 @@ import WidgetKit
                     )
                     self.lastActivityUpdate = coolant.timestamp
                     self.lastActivityLevel = level
-                    onDeferredResult(nil)
-                } catch { onDeferredResult(error) }
+                    completion(nil)
+                } catch { completion(error) }
             }
         }
     }
 
     func endActivity() {
         generation += 1
-        startPending = false
         pendingUpdateID = nil
         let old = activity
         activity = nil
         lastActivityUpdate = nil
         lastActivityLevel = nil
+        cancelDeferredStart()
         if let old {
             enqueue { await old.end(nil, dismissalPolicy: .immediate) }
         }
@@ -103,11 +104,13 @@ import WidgetKit
         lastPublishedLevel = level
         lastPublishedSource = source
 
-        if changed || (lastWidgetWrite.map { coolant.timestamp.timeIntervalSince($0) >= 60 } ?? true) {
+        if changed || (lastWidgetAttempt.map { coolant.timestamp.timeIntervalSince($0) >= 30 } ?? true) {
+            lastWidgetAttempt = coolant.timestamp
             let snapshot = WidgetSnapshot(source: source, temperature: Int(coolant.value),
                                           sampleDate: coolant.timestamp, level: level)
-            if WidgetSnapshotStore.write(snapshot) {
-                lastWidgetWrite = coolant.timestamp
+            if WidgetSnapshotStore.write(snapshot),
+               changed || (lastWidgetReload.map { coolant.timestamp.timeIntervalSince($0) >= 60 } ?? true) {
+                lastWidgetReload = coolant.timestamp
                 WidgetCenter.shared.reloadTimelines(ofKind: "CoolantSnapshot")
             }
         }
@@ -132,11 +135,12 @@ import WidgetKit
 
     func markActivityStale() {
         generation += 1
-        startPending = false
         pendingUpdateID = nil
         // Clearing the snapshot also prevents an old reading appearing current in the widget.
         clearWidget()
         lastActivityUpdate = nil
+        cancelDeferredStart()
+        guard hasActivity else { return }
         let session = generation
         enqueue { [weak self] in
             guard let self, self.generation == session, self.hasActivity, let activity = self.activity else { return }
@@ -145,10 +149,22 @@ import WidgetKit
     }
 
     func clearWidget() {
-        lastWidgetWrite = nil
+        lastWidgetAttempt = nil
+        lastWidgetReload = nil
         lastPublishedLevel = nil
         lastPublishedSource = nil
         if WidgetSnapshotStore.clear() { WidgetCenter.shared.reloadTimelines(ofKind: "CoolantSnapshot") }
+    }
+
+    static func isRetryableStartError(_ error: any Error) -> Bool {
+        guard let error = error as? PresentationError else { return false }
+        return error != .activitiesDisabled
+    }
+
+    private func cancelDeferredStart() {
+        let completion = deferredStartCompletion
+        deferredStartCompletion = nil
+        completion?(PresentationError.interrupted)
     }
 
     private func enqueue(_ operation: @escaping @MainActor () async -> Void) {
@@ -172,12 +188,13 @@ import WidgetKit
     }
 
     private enum PresentationError: LocalizedError {
-        case activitiesDisabled, noFreshData, needsForeground
+        case activitiesDisabled, noFreshData, needsForeground, interrupted
         var errorDescription: String? {
             switch self {
             case .activitiesDisabled: "Разрешите Live Activities для CarGauge в настройках iPhone."
             case .noFreshData: "Дождитесь свежего показания температуры."
             case .needsForeground: "Откройте CarGauge, чтобы запустить Live Activity."
+            case .interrupted: "Запуск Live Activity прерван. Дождитесь свежего замера."
             }
         }
     }

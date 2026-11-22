@@ -132,3 +132,37 @@ import Testing
         }
     }
 }
+
+@Test func ignitionOnlyEventuallyParksButMissingRPMNeverCountsAsZero() {
+    let start = Date(timeIntervalSince1970: 500)
+    var engine = EngineIdleMonitor()
+    for offset in stride(from: 0.0, through: 42.0, by: 3) {
+        let time = start + offset
+        let parked = engine.shouldPark(after: Reading(0, at: time), at: time)
+        #expect(!parked)
+    }
+    let parked = engine.shouldPark(after: Reading(0, at: start + 45), at: start + 45)
+    #expect(parked)
+    let missing = engine.shouldPark(after: nil, at: start + 48)
+    #expect(!missing)
+    let next = engine.shouldPark(after: Reading(0, at: start + 51), at: start + 51)
+    #expect(!next)
+}
+
+@Test func linkLossPreservesPriorMotionButBreaksTheZeroSeries() {
+    let start = Date(timeIntervalSince1970: 500)
+    var engine = EngineIdleMonitor()
+    _ = engine.shouldPark(after: Reading(800, at: start), at: start)
+    for offset in stride(from: 1.0, through: 13.0, by: 3) {
+        let time = start + offset
+        _ = engine.shouldPark(after: Reading(0, at: time), at: time)
+    }
+    engine.interrupt()
+    for offset in stride(from: 16.0, through: 28.0, by: 3) {
+        let time = start + offset
+        let parked = engine.shouldPark(after: Reading(0, at: time), at: time)
+        #expect(!parked)
+    }
+    let parked = engine.shouldPark(after: Reading(0, at: start + 31), at: start + 31)
+    #expect(parked)
+}

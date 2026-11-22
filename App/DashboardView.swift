@@ -115,7 +115,7 @@ struct DashboardView: View {
     private var parkedState: some View {
         GaugePanel(instrument: true) {
             VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                Text("Автомобиль на стоянке")
+                Text("Двигатель не работает")
                     .font(.title2.bold())
                     .accessibilityAddTraits(.isHeader)
                 Text("Измерения приостановлены. История замеров доступна ниже.")

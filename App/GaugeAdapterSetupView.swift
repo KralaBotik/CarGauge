@@ -7,7 +7,7 @@ struct GaugeAdapterSetupView: View {
 
     var body: some View {
         NavigationStack {
-            AdapterList(model: model, ble: model.ble)
+            AdapterList(model: model, ble: model.discoveryBLE)
                 .navigationTitle("Найти адаптер")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -21,11 +21,9 @@ struct GaugeAdapterSetupView: View {
                 }
         }
         .interactiveDismissDisabled(model.isCheckingSelection)
-        .onAppear { model.discoverAdapters() }
+        .onAppear { model.openAdapterSetup() }
         .onDisappear { model.leaveAdapterSetup() }
-        .onChange(of: model.phase) { _, phase in
-            if phase == .streaming && model.hasConfiguredAdapter { dismiss() }
-        }
+        .onChange(of: model.completedAdapterSelection) { _, _ in dismiss() }
     }
 }
 
@@ -92,9 +90,8 @@ private struct AdapterList: View {
     }
 
     @ViewBuilder private var discoveryStatus: some View {
-        if model.phase == .failed && ble.isClosed {
-            Text("Проверка не прошла. Проверьте питание и зажигание, затем обновите список.")
-                .foregroundStyle(palette.warning)
+        if let message = model.adapterSetupMessage {
+            Text(message).foregroundStyle(palette.warning)
         }
         switch scanState {
         case .scanning:
@@ -134,7 +131,7 @@ private struct AdapterList: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(GaugeActionStyle())
-                        .disabled(model.isRunning || ble.isClosed)
+                        .disabled(model.isCheckingSelection)
                     }
                 }
             }

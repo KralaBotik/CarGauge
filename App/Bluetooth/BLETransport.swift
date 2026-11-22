@@ -104,6 +104,12 @@ enum BLEDiagnostic: Equatable {
     private var ready = false
     private var closed = false
     var isClosed: Bool { closed }
+    var permitsAutomaticRetry: Bool {
+        switch diagnosticDetail {
+        case .unauthorized, .poweredOff, .unavailable, .unsupportedProfile: false
+        default: true
+        }
+    }
 
     init(targetID: UUID? = nil) {
         selectedID = targetID
@@ -504,6 +510,13 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
 }
 
 extension BLETransport: @preconcurrency CBPeripheralDelegate {
+    func peripheral(_ device: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+        guard device === peripheral, !closed, !invalidatedServices.isEmpty else { return }
+        if let profile, invalidatedServices.allSatisfy({ $0.uuid != profile.service }) { return }
+        // The previous characteristic references are invalid. Reinitialize ELM on a new transport.
+        fail(OBDError.adapter("BLE-сервисы адаптера изменились"))
+    }
+
     func peripheral(_ device: CBPeripheral, didDiscoverServices error: Error?) {
         guard device === peripheral, !closed, connectWaiter != nil else { return }
         if let error { fail(error); return }

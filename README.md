@@ -18,4 +18,4 @@ swift run cargauge-simulator reconnect
 python3 scripts/validate_project.py
 ```
 
-На macOS CI запускает XCTest на iPhone 11, проверяет запуск Release с тестовыми аргументами и обновление Full 0.3.0 → 0.4.0 на том же симуляторе. CI сохраняет именованные скриншоты, результаты XCTest, Release IPA и SHA-256. Для устройства нужен iOS 18.0 или новее. Проверка физического Vgate и вывода CarPlay остаётся отдельной приёмкой. [Интерфейс и доступность](docs/DESIGN.md), [архитектура](docs/ARCHITECTURE.md), [ревью](docs/REVIEW.md).
+На macOS CI запускает XCTest на iPhone 11, проверяет запуск Release с тестовыми аргументами и обновление Full 0.4.0 → 0.4.1 на том же симуляторе. CI сохраняет именованные скриншоты, результаты XCTest, Release IPA и SHA-256. Для устройства нужен iOS 18.0 или новее. Проверка физического Vgate и вывода CarPlay остаётся отдельной приёмкой. [Интерфейс и доступность](docs/DESIGN.md), [архитектура](docs/ARCHITECTURE.md), [ревью](docs/REVIEW.md).
