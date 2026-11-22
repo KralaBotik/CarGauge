@@ -226,7 +226,9 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         app.buttons["settings-nav"].tap()
-        XCTAssertTrue(app.staticTexts["Vgate iCar Pro BLE (CI)"].waitForExistence(timeout: responseTimeout))
+        let adapter = app.descendants(matching: .any)["configured-adapter"].firstMatch
+        XCTAssertTrue(adapter.waitForExistence(timeout: responseTimeout))
+        XCTAssertEqual(adapter.value as? String, "Vgate iCar Pro BLE (CI)")
         let automatic = app.switches["auto-connect"]
         XCTAssertTrue(automatic.waitForExistence(timeout: responseTimeout))
         XCTAssertEqual(automatic.value as? String, "0")

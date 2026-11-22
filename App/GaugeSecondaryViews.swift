@@ -105,7 +105,12 @@ struct GaugeSettingsView: View {
         GaugePage(spacing: GaugeSpacing.section) {
             GaugeSection(title: "Автомобиль") {
                 if let name = model.configuredName {
-                    LabeledContent("Адаптер", value: name).font(.subheadline)
+                    LabeledContent("Адаптер", value: name)
+                        .font(.subheadline)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Сохранённый адаптер")
+                        .accessibilityValue(Text(verbatim: name))
+                        .accessibilityIdentifier("configured-adapter")
                 }
                 Toggle("Подключаться при открытии", isOn: $model.autoConnect)
                     .tint(palette.operating)
