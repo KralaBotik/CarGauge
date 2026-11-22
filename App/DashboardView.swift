@@ -71,11 +71,15 @@ struct DashboardView: View {
 
     private func navigationButton(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.body.weight(.medium))
-                .frame(width: 44, height: 44)
-                .background(palette.raised, in: Circle())
-                .contentShape(Circle())
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.body.weight(.medium))
+                Text(title).font(.caption2.weight(.medium))
+            }
+            .padding(.horizontal, GaugeSpacing.small)
+            .padding(.vertical, GaugeSpacing.xsmall)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(palette.raised, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(palette.text)

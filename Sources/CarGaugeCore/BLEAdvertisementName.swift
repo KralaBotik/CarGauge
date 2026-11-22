@@ -20,12 +20,18 @@ public enum BLEAdvertisementName {
     }
 
     public static func isLikelyOBD(_ name: String) -> Bool {
-        let words = name.lowercased().split { !$0.isLetter && !$0.isNumber }
+        let words = name.precomposedStringWithCompatibilityMapping.lowercased().split { !$0.isLetter && !$0.isNumber }
         return words.contains { word in
             switch word {
             case "vgate", "icar", "icarpro", "obd", "obdii", "obd2", "elm327": true
             default: false
             }
         }
+    }
+
+    public static func disambiguatingID(_ identifier: UUID, against peers: [UUID]) -> String {
+        let full = identifier.uuidString
+        let suffix = full.suffix(8)
+        return peers.contains { $0.uuidString.suffix(8) == suffix } ? full : String(suffix)
     }
 }

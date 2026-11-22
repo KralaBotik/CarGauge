@@ -1,3 +1,4 @@
+import CarGaugeCore
 import Foundation
 import SwiftUI
 import UIKit
@@ -72,8 +73,8 @@ private struct AdapterList: View {
                 }
             } else {
                 discoveryStatus
-                deviceGroup("Вероятные OBD-II адаптеры", devices: nearby.filter(\.matchesVgateName), id: "likely-adapters")
-                deviceGroup("Другие устройства", devices: nearby.filter { !$0.matchesVgateName }, id: "other-devices")
+                deviceGroup("Вероятные OBD-II адаптеры", devices: nearby.filter(\.hasOBDName), id: "likely-adapters")
+                deviceGroup("Другие устройства", devices: nearby.filter { !$0.hasOBDName }, id: "other-devices")
                 if scanState == .finished || scanState == .idle {
                     Button("Обновить список") { model.discoverAdapters(extended: expanded) }
                         .buttonStyle(GaugeActionStyle(emphasized: nearby.isEmpty))
@@ -142,22 +143,24 @@ private struct AdapterList: View {
 
     private func adapterRow(_ device: BLEDevice, among peers: [BLEDevice]) -> some View {
         let title = device.hasName ? device.name : "Устройство без имени"
-        let repeated = peers.contains {
+        let duplicates = peers.filter {
             $0.id != device.id && $0.name.caseInsensitiveCompare(device.name) == .orderedSame
-        }
-        let identifier = !device.hasName || repeated ? "ID · \(device.id.uuidString.suffix(8))" : nil
+        }.map(\.id)
+        let suffix = BLEAdvertisementName.disambiguatingID(device.id, against: duplicates)
+        let identifier = !device.hasName || !duplicates.isEmpty ? "ID · \(suffix)" : nil
 
         return Button { model.selectDevice(device.id) } label: {
             HStack(spacing: GaugeSpacing.medium) {
-                Image(systemName: device.matchesVgateName ? "car.side" : "dot.radiowaves.left.and.right")
+                Image(systemName: device.hasOBDName ? "car.side" : "dot.radiowaves.left.and.right")
                     .imageScale(.medium)
-                    .foregroundStyle(device.matchesVgateName ? palette.accent : palette.muted)
+                    .foregroundStyle(device.hasOBDName ? palette.accent : palette.muted)
                     .frame(width: 32)
                 VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
                     Text(title).font(.body.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     if let identifier {
                         Text(identifier).font(.caption.monospaced()).foregroundStyle(palette.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: GaugeSpacing.xsmall)

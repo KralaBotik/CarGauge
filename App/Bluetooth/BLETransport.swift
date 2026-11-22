@@ -12,7 +12,7 @@ struct BLEDevice: Identifiable {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var matchesVgateName: Bool {
+    var hasOBDName: Bool {
         BLEAdvertisementName.isLikelyOBD(name)
     }
 }
@@ -68,7 +68,8 @@ enum BLEDiagnostic: Equatable {
     @Published private(set) var diagnostic = "Адаптер не выбран"
     @Published private(set) var diagnosticDetail: BLEDiagnostic = .noSelection
     @Published private(set) var selectedID: UUID?
-    @Published private(set) var selectedName: String?
+    private var selectedName: String?
+    var connectedName: String? { selectedName ?? BLEAdvertisementName.clean(peripheral?.name) }
 
     /// Enables unfiltered scans for a selected UUID only in the foreground.
     /// Discovery itself is always unfiltered and must be started by the user.
@@ -196,7 +197,7 @@ enum BLEDiagnostic: Equatable {
             devices.append(item)
         }
         devices.sort {
-            $0.matchesVgateName == $1.matchesVgateName ? $0.rssi > $1.rssi : $0.matchesVgateName
+            $0.hasOBDName == $1.hasOBDName ? $0.rssi > $1.rssi : $0.hasOBDName
         }
     }
 
@@ -493,6 +494,8 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard central === manager, !closed else { return }
         if scanningForSelection, connectWaiter != nil, device.identifier == selectedID {
+            selectedName = BLEAdvertisementName.clean(advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+                ?? selectedName
             attach(device, retrieved: false)
             return
         }

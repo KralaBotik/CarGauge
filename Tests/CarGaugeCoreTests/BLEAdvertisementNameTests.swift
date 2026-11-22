@@ -21,12 +21,19 @@ final class BLEAdvertisementNameTests: XCTestCase {
     }
 
     func testClassificationKeepsNonAdapterNamesSeparate() {
-        for name in ["Vgate iCar Pro BLE", "iCar", "iCarPro", "OBD-II", "OBD2", "ELM327"] {
+        for name in ["Vgate iCar Pro BLE", "iCar", "iCarPro", "OBD-II", "OBD2", "OBDⅡ", "ELM327"] {
             XCTAssertTrue(BLEAdvertisementName.isLikelyOBD(name), name)
         }
         for name in ["ICARUS", "Scobd", "My headphones", ""] {
             XCTAssertFalse(BLEAdvertisementName.isLikelyOBD(name), name)
         }
         XCTAssertEqual(BLEAdvertisementName.clean("Мой\u{202E} адаптер"), "Мой адаптер")
+    }
+
+    func testCollidingSuffixesUseFullIdentifiers() throws {
+        let first = try XCTUnwrap(UUID(uuidString: "10000000-0000-0000-0000-0000A481B001"))
+        let second = try XCTUnwrap(UUID(uuidString: "20000000-0000-0000-0000-0000A481B001"))
+        XCTAssertEqual(BLEAdvertisementName.disambiguatingID(first, against: []), "A481B001")
+        XCTAssertEqual(BLEAdvertisementName.disambiguatingID(first, against: [second]), first.uuidString)
     }
 }
