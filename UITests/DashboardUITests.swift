@@ -118,7 +118,7 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testZeroRPMLeadsToParkedState() {
         let app = launch(scenario: "engineOff")
-        guard app.staticTexts["Автомобиль на стоянке"].waitForExistence(timeout: responseTimeout) else {
+        guard app.staticTexts["Двигатель не работает"].waitForExistence(timeout: responseTimeout) else {
             XCTFail("The engine-off scenario did not reach its parked state.")
             return
         }
@@ -167,13 +167,14 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "Release-Cold-Launch")
     }
 
-    @MainActor func testReleaseUpgradeRetainsLegacyPreferences() {
+    @MainActor func testReleaseUpgradeRetainsPreferences() {
         let app = XCUIApplication()
         app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         app.buttons["settings-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Vgate iCar Pro BLE (CI)"].waitForExistence(timeout: responseTimeout))
         let automatic = app.switches["auto-connect"]
         XCTAssertTrue(automatic.waitForExistence(timeout: responseTimeout))
         XCTAssertEqual(automatic.value as? String, "0")

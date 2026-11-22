@@ -113,11 +113,13 @@ import Testing
     var commands: [String] = []
     var timeouts: [TimeInterval] = []
     var responses: [String: String] = [:]
+    var timedOutCommands: Set<String> = []
     func connect() async throws {}
     func disconnect() {}
     func exchange(_ command: String, timeout: TimeInterval) async throws -> String {
         commands.append(command)
         timeouts.append(timeout)
+        if timedOutCommands.contains(command) { throw OBDError.timeout }
         return responses[command, default: "OK"]
     }
 }
@@ -208,4 +210,48 @@ import Testing
     #expect(history.points.map(\.segment) == [0, 0, 1, 1])
     history.append(Reading(45, at: start + 9))
     #expect(history.points.map(\.segment) == [0, 1, 1, 2])
+}
+
+@MainActor
+@Test func timeoutIdentifiesOptionalSensorAndNextLinkCanContinueWithoutIt() async throws {
+    let transport = ScriptedTransport()
+    transport.responses = ["ATZ": "ELM327 v2.3", "0105": "41057B", "010C": "410C0C80"]
+    transport.timedOutCommands = ["0142"]
+    let client = ELM327Client(transport: transport)
+    try await client.initialize()
+    let coolant = try await client.readCoolant()
+    do {
+        _ = try await client.readSupplementary(source: .vehicle, coolant: coolant)
+        Issue.record("Expected to identify the supplementary timeout")
+    } catch let error as SupplementaryTimeout {
+        #expect(error.sensor == .voltage)
+        transport.disconnect()
+        let replacement = ScriptedTransport()
+        replacement.responses = transport.responses
+        replacement.timedOutCommands = transport.timedOutCommands
+        let nextClient = ELM327Client(transport: replacement)
+        try await replacement.connect()
+        try await nextClient.initialize()
+        let next = try await nextClient.readCoolant()
+        let recovered = try await nextClient.readSupplementary(source: .vehicle, coolant: next, skipping: [error.sensor])
+        #expect(recovered.coolant.value == 83)
+        #expect(recovered.rpm?.value == 800)
+        #expect(recovered.voltage == nil)
+        #expect(!replacement.commands.contains("0142"))
+    }
+}
+
+@MainActor
+@Test func unavailableFallbackVoltageIsNotPolledOnEveryCoolantCycle() async throws {
+    let transport = ScriptedTransport()
+    transport.responses = ["ATZ": "ELM327 v2.3", "0105": "41057B", "010C": "?",
+                           "0142": "NO DATA", "ATRV": "NO DATA"]
+    let client = ELM327Client(transport: transport)
+    try await client.initialize()
+    for _ in 0..<3 {
+        let coolant = try await client.readCoolant()
+        let snapshot = try await client.readSupplementary(source: .vehicle, coolant: coolant)
+        #expect(snapshot.voltage == nil)
+    }
+    #expect(transport.commands.filter { $0 == "ATRV" }.count == 1)
 }

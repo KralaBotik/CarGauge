@@ -2,6 +2,7 @@ import CarGaugeCore
 
 /// This target displays readings in the app only and creates no shared widget state.
 @MainActor final class TelemetryPresentation {
+    static func isRetryableStartError(_ error: any Error) -> Bool { false }
     var hasActivity: Bool { false }
     var isForeground = false
 

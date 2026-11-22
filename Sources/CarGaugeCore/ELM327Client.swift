@@ -1,5 +1,16 @@
 import Foundation
 
+public enum SupplementarySensor: Hashable, Sendable {
+    case rpm, voltage
+}
+
+public struct SupplementaryTimeout: LocalizedError, Sendable {
+    public let sensor: SupplementarySensor
+    public var errorDescription: String? {
+        sensor == .rpm ? "Истекло время ожидания оборотов" : "Истекло время ожидания напряжения"
+    }
+}
+
 @MainActor public final class ELM327Client {
     public static let initializationCommands = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"]
     private let transport: any OBDTransport
@@ -7,6 +18,7 @@ import Foundation
     private var rpmSupported = true
     private var voltageSupported = true
     private var rpmRetryAfter: Date?
+    private var voltageRetryAfter: Date?
     private var sequenceInProgress = false
     private var initialCoolant: Reading?
 
@@ -20,6 +32,7 @@ import Foundation
         rpmSupported = true
         voltageSupported = true
         rpmRetryAfter = nil
+        voltageRetryAfter = nil
         for command in Self.initializationCommands {
             try Task.checkCancellation()
             let response = try await transport.exchange(command, timeout: 5)
@@ -49,12 +62,13 @@ import Foundation
     }
 
     /// Coolant is published first by the caller; slow optional sensors never hide it.
-    public func readSupplementary(source: DataSource, coolant: Reading) async throws -> TelemetrySnapshot {
+    public func readSupplementary(source: DataSource, coolant: Reading,
+                                  skipping sensors: Set<SupplementarySensor> = []) async throws -> TelemetrySnapshot {
         try beginSequence()
         defer { sequenceInProgress = false }
         var rpm: Reading?
-        if rpmSupported && (rpmRetryAfter.map { $0 <= Date() } ?? true) {
-            let response = try await transport.exchange(OBDPID.rpm.rawValue, timeout: 3)
+        if rpmSupported && !sensors.contains(.rpm) && (rpmRetryAfter.map { $0 <= Date() } ?? true) {
+            let response = try await exchangeOptional(OBDPID.rpm.rawValue, sensor: .rpm)
             do {
                 rpm = Reading(try OBDDecoder.decode(.rpm, response: response), at: Date())
                 rpmRetryAfter = nil
@@ -65,9 +79,9 @@ import Foundation
             }
         }
         var voltage: Reading?
-        if voltageSupported {
+        if voltageSupported && !sensors.contains(.voltage) && (voltageRetryAfter.map { $0 <= Date() } ?? true) {
             if voltageSource == .ecu {
-                let response = try await transport.exchange(OBDPID.moduleVoltage.rawValue, timeout: 3)
+                let response = try await exchangeOptional(OBDPID.moduleVoltage.rawValue, sensor: .voltage)
                 do {
                     voltage = Reading(try OBDDecoder.decode(.moduleVoltage, response: response), at: Date())
                 } catch let error as OBDError where error.isMissingSample || error == .unsupported {
@@ -75,18 +89,27 @@ import Foundation
                 }
             }
             if voltageSource == .adapter {
-                let response = try await transport.exchange("ATRV", timeout: 3)
+                let response = try await exchangeOptional("ATRV", sensor: .voltage)
                 do {
                     voltage = Reading(try OBDDecoder.adapterVoltage(response), at: Date())
                 } catch OBDError.unsupported {
                     voltageSupported = false
                 } catch let error as OBDError where error.isMissingSample {
-                    // Coolant and RPM are still valid when only adapter voltage is unavailable.
+                    voltageRetryAfter = Date().addingTimeInterval(10)
                 }
             }
         }
         try Task.checkCancellation()
         return TelemetrySnapshot(source: source, coolant: coolant, rpm: rpm, voltage: voltage, voltageSource: voltageSource)
+    }
+
+    private func exchangeOptional(_ command: String, sensor: SupplementarySensor) async throws -> String {
+        do {
+            return try await transport.exchange(command, timeout: 3)
+        } catch OBDError.timeout {
+            // The link still needs a fresh handshake. The caller can omit this sensor on the new link.
+            throw SupplementaryTimeout(sensor: sensor)
+        }
     }
 
     private func beginSequence() throws {
