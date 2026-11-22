@@ -73,6 +73,7 @@ final class DashboardUITests: XCTestCase {
 
         app.buttons["history-nav"].tap()
         XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         snapshot(app, named: "06-Trip-History")
         app.navigationBars.buttons.firstMatch.tap()
 
@@ -91,6 +92,8 @@ final class DashboardUITests: XCTestCase {
         let pid = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
         XCTAssertTrue(pid.waitForExistence(timeout: responseTimeout))
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "0100")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
+        XCTAssertFalse(app.staticTexts["Bluetooth"].exists)
         snapshot(app, named: "08-Diagnostics")
     }
 

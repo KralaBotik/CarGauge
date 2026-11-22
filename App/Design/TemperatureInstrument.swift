@@ -129,9 +129,11 @@ private struct ThermalDial: View {
         .overlay {
             if let value, let state {
                 let position = fraction(value)
-                DialMarker(position: position)
-                    .fill(palette.tone(for: state))
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: position)
+                palette.tone(for: state)
+                    .mask {
+                        DialMarker(position: position)
+                            .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: position)
+                    }
             }
         }
         .overlay(alignment: .bottom) {

@@ -67,6 +67,9 @@ private struct AdapterList: View {
         let nearby = devices
         GaugePage {
             GaugeHeading(title: "Адаптеры рядом", subtitle: "Коснитесь своего адаптера. Сохраним его, когда автомобиль ответит.")
+            #if DEBUG
+            if model.discoveryFixture { SourceIndicator(source: .simulator) }
+            #endif
             if model.isCheckingSelection {
                 GaugeRule()
                 ProgressView("Проверяем связь с автомобилем…")

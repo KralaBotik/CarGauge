@@ -4,7 +4,7 @@ import SwiftUI
 
 struct WarmupChart: View {
     @Environment(\.gaugePalette) private var palette
-    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 130
+    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 148
     @ScaledMetric(relativeTo: .caption) private var historyHeight: CGFloat = 208
     let points: [WarmupHistory.Point]
     let thresholds: ThermalThresholds

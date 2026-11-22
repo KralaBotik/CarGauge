@@ -235,7 +235,7 @@ struct DashboardView: View {
     private func metrics(at now: Date) -> some View {
         let rpm = model.supplementary?.rpm?.gaugeValue(at: now)
         let voltage = model.supplementary?.voltage?.gaugeValue(at: now)
-        let rpmLabel = rpm.map { Int($0.rounded()).formatted() }
+        let rpmLabel = rpm.map { Int($0.rounded()).formatted(.number.grouping(.never)) }
         let voltageLabel = voltage.map { $0.formatted(.number.precision(.fractionLength(1))) }
         let layout = typeSize >= .xxLarge
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.medium))

@@ -9,6 +9,9 @@ struct GaugeHistoryView: View {
         GaugePage(spacing: GaugeSpacing.section) {
             if let first = model.history.first, let last = model.history.last {
                 GaugeHeading(title: "Температура за сеанс", subtitle: "До 30 минут текущей или последней поездки.")
+                #if DEBUG
+                if model.source == .simulator { SourceIndicator(source: model.source) }
+                #endif
                 WarmupChart(points: model.history, thresholds: model.thresholds, compact: false,
                             alert: model.level, tripStartedAt: model.tripStartedAt)
                 GaugeSection(title: "Сводка замеров") {
@@ -43,10 +46,15 @@ struct GaugeDiagnosticsView: View {
             GaugeHeading(title: model.connectionTitle, subtitle: model.status)
                 .accessibilityIdentifier("diagnostic-status")
 
-            GaugeSection(title: "Соединение") {
-                diagnosticField("Адаптер", model.configuredName ?? (model.hasConfiguredAdapter ? "Сохранён" : "Не настроен"))
-                diagnosticField("Bluetooth", ble.diagnostic)
-                diagnosticField("Обмен с автомобилем", model.adapterStage)
+            #if DEBUG
+            if model.source == .simulator { SourceIndicator(source: model.source) }
+            #endif
+            if model.source == .vehicle {
+                GaugeSection(title: "Соединение") {
+                    diagnosticField("Адаптер", model.configuredName ?? (model.hasConfiguredAdapter ? "Сохранён" : "Не настроен"))
+                    diagnosticField("Bluetooth", ble.diagnostic)
+                    diagnosticField("Обмен с автомобилем", model.adapterStage)
+                }
             }
 
             GaugeSection(title: "Параметры OBD-II") {

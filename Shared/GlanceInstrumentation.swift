@@ -114,7 +114,7 @@ struct GlanceActivityInstrument: View {
                     .font(isSmall ? .subheadline.weight(.semibold) : .headline)
                 Text("Температура ОЖ").font(.caption2).foregroundStyle(.secondary)
             } else if isSmall {
-                Label(state.level.glanceTitle ?? "Охлаждение",
+                Label(state.level.glanceTitle ?? "Температура ОЖ",
                       systemImage: state.level.glanceSymbol)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.tone(for: state.level))
