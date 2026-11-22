@@ -38,3 +38,5 @@ State Preservation and Restoration предназначена для управ�
 ### Имена Bluetooth, проверено 22 ноября 2026
 
 Apple различает локальное имя из рекламы BLE и имя GAP, доступное через `CBPeripheral.name`. При поиске CarGauge предпочитает локальное имя, сохраняет его между пакетами одного поиска и при его отсутствии использует доступное имя CoreBluetooth. Отображаемое имя служит подсказкой при выборе. Фактическое имя и профиль пользовательского Vgate остаются **UNVERIFIED** до проверки на устройстве. [Локальное имя BLE](https://developer.apple.com/documentation/corebluetooth/cbadvertisementdatalocalnamekey), [Имя CBPeripheral](https://developer.apple.com/documentation/corebluetooth/cbperipheral/name).
+
+В документации Vgate для iCar Pro BLE 4.0 перечислены имена `IOS-VLINK` и `ANDROID-VLINK`. Поиск помечает `IOS-VLINK` как вероятный OBD-II адаптер. Имя с явной пометкой Android остаётся среди других устройств, если его сообщает CoreBluetooth. [Vgate iCar Pro BLE 4.0](https://www.vgatemall.com/products-detail/i-9/).

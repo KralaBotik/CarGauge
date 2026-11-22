@@ -21,9 +21,10 @@ public enum BLEAdvertisementName {
 
     public static func isLikelyOBD(_ name: String) -> Bool {
         let words = name.precomposedStringWithCompatibilityMapping.lowercased().split { !$0.isLetter && !$0.isNumber }
+        if words == ["android", "vlink"] { return false }
         return words.contains { word in
             switch word {
-            case "vgate", "icar", "icarpro", "obd", "obdii", "obd2", "elm327": true
+            case "vgate", "icar", "icarpro", "obd", "obdii", "obd2", "elm327", "vlink": true
             default: false
             }
         }

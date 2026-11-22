@@ -41,6 +41,7 @@ private struct AdapterList: View {
                   name: "Vgate iCar Pro BLE", rssi: -48),
         BLEDevice(id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7A, 0x12, 0xA4, 0x81, 0xB0, 0x02)),
                   name: "Vgate iCar Pro BLE", rssi: -56),
+        BLEDevice(id: UUID(), name: "IOS-VLINK", rssi: -58),
         BLEDevice(id: UUID(), name: "Устройство рядом", rssi: -60),
         BLEDevice(id: UUID(), name: "", rssi: -66),
     ]

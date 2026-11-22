@@ -21,10 +21,10 @@ final class BLEAdvertisementNameTests: XCTestCase {
     }
 
     func testClassificationKeepsNonAdapterNamesSeparate() {
-        for name in ["Vgate iCar Pro BLE", "iCar", "iCarPro", "OBD-II", "OBD2", "OBDⅡ", "ELM327"] {
+        for name in ["Vgate iCar Pro BLE", "iCar", "iCarPro", "OBD-II", "OBD2", "OBDⅡ", "ELM327", "IOS-VLINK", "VLINK"] {
             XCTAssertTrue(BLEAdvertisementName.isLikelyOBD(name), name)
         }
-        for name in ["ICARUS", "Scobd", "My headphones", ""] {
+        for name in ["ICARUS", "Scobd", "My headphones", "ANDROID-VLINK", ""] {
             XCTAssertFalse(BLEAdvertisementName.isLikelyOBD(name), name)
         }
         XCTAssertEqual(BLEAdvertisementName.clean("Мой\u{202E} адаптер"), "Мой адаптер")
