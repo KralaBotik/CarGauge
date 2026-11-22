@@ -12,9 +12,8 @@ struct BLEDevice: Identifiable {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    var matchesVgateName: Bool {
-        let value = name.lowercased()
-        return ["vgate", "icar", "obd", "elm"].contains { value.contains($0) }
+    var hasOBDName: Bool {
+        BLEAdvertisementName.isLikelyOBD(name)
     }
 }
 
@@ -69,7 +68,8 @@ enum BLEDiagnostic: Equatable {
     @Published private(set) var diagnostic = "Адаптер не выбран"
     @Published private(set) var diagnosticDetail: BLEDiagnostic = .noSelection
     @Published private(set) var selectedID: UUID?
-    @Published private(set) var selectedName: String?
+    private var selectedName: String?
+    var connectedName: String? { selectedName ?? BLEAdvertisementName.clean(peripheral?.name) }
 
     /// Enables unfiltered scans for a selected UUID only in the foreground.
     /// Discovery itself is always unfiltered and must be started by the user.
@@ -83,6 +83,8 @@ enum BLEDiagnostic: Equatable {
 
     private var manager: CBCentralManager?
     private var discoveredPeripherals: [UUID: CBPeripheral] = [:]
+    private var advertisementNames: [UUID: String] = [:]
+    private var discoveryRSSI: [UUID: Int] = [:]
     private var peripheral: CBPeripheral?
     private var writeCharacteristic: CBCharacteristic?
     private var notifyCharacteristic: CBCharacteristic?
@@ -141,6 +143,8 @@ enum BLEDiagnostic: Equatable {
         if discovering { finishDiscovery(state: .idle) }
         devices = []
         discoveredPeripherals.removeAll()
+        advertisementNames.removeAll()
+        discoveryRSSI.removeAll()
         extendedDiscovery = extended
         discovering = true
         scanState = .scanning
@@ -170,7 +174,31 @@ enum BLEDiagnostic: Equatable {
         scanDeadline?.cancel()
         scanDeadline = nil
         if !scanningForSelection { manager?.stopScan() }
+        for device in discoveredPeripherals.values where device !== peripheral {
+            device.delegate = nil
+        }
         scanState = state
+    }
+
+    private func updateDiscoveredDevice(_ device: CBPeripheral) {
+        guard discovering, discoveredPeripherals[device.identifier] === device,
+              let rssi = discoveryRSSI[device.identifier] else { return }
+        let name = BLEAdvertisementName.preferred(
+            advertised: nil,
+            peripheral: device.name,
+            previousAdvertisement: advertisementNames[device.identifier]
+        )
+        let item = BLEDevice(id: device.identifier, name: name, rssi: rssi)
+        guard extendedDiscovery || item.hasName else { return }
+        if let index = devices.firstIndex(where: { $0.id == device.identifier }) {
+            guard devices[index].name != item.name || devices[index].rssi != item.rssi else { return }
+            devices[index] = item
+        } else {
+            devices.append(item)
+        }
+        devices.sort {
+            $0.hasOBDName == $1.hasOBDName ? $0.rssi > $1.rssi : $0.hasOBDName
+        }
     }
 
     func connect() async throws {
@@ -399,6 +427,8 @@ enum BLEDiagnostic: Equatable {
         }
         manager?.delegate = nil
         discoveredPeripherals.removeAll()
+        advertisementNames.removeAll()
+        discoveryRSSI.removeAll()
         peripheral = nil
         remainingProfiles.removeAll()
         pendingWrite = nil
@@ -464,25 +494,23 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard central === manager, !closed else { return }
         if scanningForSelection, connectWaiter != nil, device.identifier == selectedID {
+            selectedName = BLEAdvertisementName.clean(advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+                ?? selectedName
             attach(device, retrieved: false)
             return
         }
         guard discovering else { return }
-        let advertisedName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let peripheralName = device.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = (advertisedName?.isEmpty == false ? advertisedName : peripheralName) ?? ""
-        let item = BLEDevice(id: device.identifier, name: name, rssi: RSSI.intValue)
-        guard extendedDiscovery || item.hasName else { return }
-        discoveredPeripherals[device.identifier] = device
-        if let index = devices.firstIndex(where: { $0.id == device.identifier }) {
-            devices[index] = item
-        } else {
-            devices.append(item)
+        let id = device.identifier
+        if let oldDevice = discoveredPeripherals[id], oldDevice !== device {
+            oldDevice.delegate = nil
         }
-        devices.sort {
-            $0.matchesVgateName == $1.matchesVgateName ? $0.rssi > $1.rssi : $0.matchesVgateName
+        discoveredPeripherals[id] = device
+        discoveryRSSI[id] = RSSI.intValue
+        if let name = BLEAdvertisementName.clean(advertisementData[CBAdvertisementDataLocalNameKey] as? String) {
+            advertisementNames[id] = name
         }
+        device.delegate = self
+        updateDiscoveredDevice(device)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect device: CBPeripheral) {
@@ -510,6 +538,11 @@ extension BLETransport: @preconcurrency CBCentralManagerDelegate {
 }
 
 extension BLETransport: @preconcurrency CBPeripheralDelegate {
+    func peripheralDidUpdateName(_ device: CBPeripheral) {
+        guard !closed, discovering, discoveredPeripherals[device.identifier] === device else { return }
+        updateDiscoveredDevice(device)
+    }
+
     func peripheral(_ device: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
         guard device === peripheral, !closed, !invalidatedServices.isEmpty else { return }
         if let profile, invalidatedServices.allSatisfy({ $0.uuid != profile.service }) { return }

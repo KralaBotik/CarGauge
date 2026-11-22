@@ -21,7 +21,11 @@ final class DashboardUITests: XCTestCase {
         app.buttons["find-adapter"].tap()
         XCTAssertTrue(app.staticTexts["likely-adapters"].waitForExistence(timeout: responseTimeout))
         XCTAssertTrue(app.staticTexts["other-devices"].exists)
-        XCTAssertTrue(app.buttons["Vgate iCar Pro BLE"].exists)
+        let named = app.buttons.matching(NSPredicate(format: "label == %@", "Vgate iCar Pro BLE"))
+        XCTAssertEqual(named.count, 2)
+        XCTAssertTrue(app.buttons["IOS-VLINK"].exists)
+        let identifiers = (0..<named.count).compactMap { named.element(boundBy: $0).value as? String }
+        XCTAssertEqual(Set(identifiers), ["ID · A481B001", "ID · A481B002"])
         XCTAssertFalse(app.buttons["Устройство без имени"].exists)
         app.buttons["extended-discovery"].tap()
         XCTAssertTrue(app.buttons["Устройство без имени"].waitForExistence(timeout: responseTimeout))

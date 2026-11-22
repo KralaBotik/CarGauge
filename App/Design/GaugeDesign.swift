@@ -34,21 +34,22 @@ enum GaugeSpacing {
 struct GaugePalette {
     let scheme: ColorScheme
 
-    var canvas: Color { pair(0x171B1E, 0xEDECE8) }
-    var panel: Color { pair(0x20262A, 0xFAF9F5) }
-    var raised: Color { pair(0x2A3034, 0xE7E7E0) }
-    var instrumentTop: Color { pair(0x2B3338, 0xFDFBF6) }
-    var instrumentBottom: Color { pair(0x22292D, 0xEEEFE8) }
-    var line: Color { pair(0x3C454B, 0xC9CECA) }
-    var text: Color { pair(0xF3F1EB, 0x20282B) }
-    var muted: Color { pair(0xB1BDC3, 0x526066) }
-    var accent: Color { pair(0xF1C9A1, 0x854721) }
-    var trace: Color { pair(0xADD4C3, 0x326752) }
-    var warming: Color { pair(0xB0CEDD, 0x356176) }
-    var operating: Color { pair(0xBAD8C2, 0x306144) }
-    var warning: Color { pair(0xF7CA84, 0x8C4F14) }
-    var critical: Color { pair(0xFFA89E, 0x9A332E) }
-    var accentWash: Color { pair(0x3B332D, 0xF1DFCE) }
+    var canvas: Color { pair(0x111A1F, 0xEDF1F0) }
+    var panel: Color { pair(0x1A262C, 0xF9FBFA) }
+    var raised: Color { pair(0x243239, 0xE1E8E7) }
+    var instrumentTop: Color { pair(0x263942, 0xFFFFFF) }
+    var instrumentBottom: Color { pair(0x19252B, 0xE6EFEE) }
+    var line: Color { pair(0x3B5059, 0xBECBCB) }
+    var text: Color { pair(0xF3F6F4, 0x15292E) }
+    var muted: Color { pair(0xAEBDC5, 0x465D64) }
+    var accent: Color { pair(0xFFAE80, 0x8C3B21) }
+    var trace: Color { pair(0x9BDACB, 0x256C64) }
+    var warming: Color { pair(0xA7D5EF, 0x315E77) }
+    var operating: Color { pair(0xA9DCC2, 0x23634F) }
+    var warning: Color { pair(0xFFD08B, 0x815013) }
+    var critical: Color { pair(0xFFAA9C, 0x9D332A) }
+    var action: Color { pair(0xFFAE80, 0x8C3B21) }
+    var actionText: Color { pair(0x291A16, 0xFFFFFF) }
 
     func tone(for state: EngineTemperatureState) -> Color {
         switch state {
@@ -137,21 +138,6 @@ struct GaugeHeading: View {
     }
 }
 
-struct GaugeCaption: View {
-    @Environment(\.gaugePalette) private var palette
-    let title: String
-    var symbol: String?
-
-    var body: some View {
-        HStack(spacing: GaugeSpacing.small) {
-            if let symbol { Image(systemName: symbol).accessibilityHidden(true) }
-            Text(title).tracking(0.45)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(palette.muted)
-    }
-}
-
 struct GaugeStatus: View {
     let title: String
     let symbol: String
@@ -194,8 +180,8 @@ struct GaugeActionStyle: ButtonStyle {
             .padding(.horizontal, GaugeSpacing.medium)
             .padding(.vertical, GaugeSpacing.small)
             .frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(isEnabled ? palette.accent : palette.muted)
-            .background(emphasized ? palette.accentWash : palette.raised, in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(!isEnabled ? palette.muted : emphasized ? palette.actionText : palette.text)
+            .background(emphasized && isEnabled ? palette.action : palette.raised, in: RoundedRectangle(cornerRadius: 14))
             .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }

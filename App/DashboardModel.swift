@@ -185,8 +185,8 @@ enum MeasurementPhase {
     func selectDevice(_ id: UUID) {
         guard isAdapterSetupOpen, !isCheckingSelection, discoveryBLE.select(id) else { return }
         resumeAfterAdapterSetup = isRunning || resumeAfterAdapterSetup
-        pendingAdapterName = discoveryBLE.selectedName
         pendingAdapterID = id
+        pendingAdapterName = discoveryBLE.connectedName
         adapterSetupMessage = nil
         ble = discoveryBLE
         ble.allowsUnfilteredScan = sceneIsActive
@@ -428,16 +428,20 @@ enum MeasurementPhase {
                     let receivedAt = Date()
                     guard reading.isFresh(at: receivedAt) else { throw OBDError.noData }
                     let selectedNewAdapter = pendingAdapterID != nil
-                    if let targetID, source == .vehicle, adapterPreferences.verifiedID != targetID {
-                        guard adapterPreferences.confirm(id: targetID, name: pendingAdapterName ?? ble.selectedName,
-                                                         coolant: reading, at: receivedAt) else { throw OBDError.noData }
-                        if selectedNewAdapter {
-                            resetHistory()
-                            monitor = OverheatMonitor()
-                            monitor.apply(thresholds)
+                    if let targetID, source == .vehicle {
+                        let changedAdapter = adapterPreferences.verifiedID != targetID
+                        let name = pendingAdapterName ?? ble.connectedName
+                        if changedAdapter || selectedNewAdapter || (configuredName == nil && name != nil) {
+                            guard adapterPreferences.confirm(id: targetID, name: name,
+                                                             coolant: reading, at: receivedAt) else { throw OBDError.noData }
+                            if selectedNewAdapter && changedAdapter {
+                                resetHistory()
+                                monitor = OverheatMonitor()
+                                monitor.apply(thresholds)
+                            }
+                            configuredName = adapterPreferences.name
+                            hasConfiguredAdapter = true
                         }
-                        configuredName = adapterPreferences.name
-                        hasConfiguredAdapter = true
                     }
                     pendingAdapterID = nil
                     pendingAdapterName = nil

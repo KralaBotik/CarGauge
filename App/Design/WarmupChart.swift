@@ -4,7 +4,7 @@ import SwiftUI
 
 struct WarmupChart: View {
     @Environment(\.gaugePalette) private var palette
-    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 96
+    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 110
     @ScaledMetric(relativeTo: .caption) private var historyHeight: CGFloat = 208
     let points: [WarmupHistory.Point]
     let thresholds: ThermalThresholds
@@ -51,7 +51,7 @@ struct WarmupChart: View {
                          y: .value("Температура, °C", point.reading.value),
                          series: .value("Участок", point.segment))
                     .foregroundStyle(palette.trace)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                    .lineStyle(StrokeStyle(lineWidth: compact ? 3 : 2.5, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.linear)
                 if point.id == latest.id || singletons.contains(point.id) {
                     PointMark(x: .value("Время с начала сессии, с", point.reading.timestamp.timeIntervalSince(origin)),
