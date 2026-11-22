@@ -84,6 +84,10 @@ if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Relea
   if [[ "$status" -eq 0 ]]; then
     app="$derived/Build/Products/Release-iphoneos/$scheme.app"
     test -f "$app/Assets.car"
+    if [[ ! -s "$app/Metadata.appintents/extract.actionsdata" ]]; then
+      echo "Release build is missing the Open Instruments shortcut metadata." | tee -a "$output/CarGauge-Device.log"
+      exit 1
+    fi
     python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
       2>&1 | tee -a "$output/CarGauge-Device.log"
   fi

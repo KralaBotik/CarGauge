@@ -6,7 +6,7 @@ final class DashboardUITests: XCTestCase {
     #if DEBUG
     @MainActor func testFirstLaunchHasUsefulOnboardingAndNoMeasurements() {
         let app = launch(appearance: "light")
-        XCTAssertTrue(app.staticTexts["Подключите OBD-II адаптер"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["Подключите автомобиль"].waitForExistence(timeout: responseTimeout))
         let find = app.buttons["find-adapter"]
         XCTAssertTrue(find.isHittable)
         XCTAssertEqual(find.label, "Найти адаптер")
@@ -27,7 +27,9 @@ final class DashboardUITests: XCTestCase {
         let identifiers = (0..<named.count).compactMap { named.element(boundBy: $0).value as? String }
         XCTAssertEqual(Set(identifiers), ["ID · A481B001", "ID · A481B002"])
         XCTAssertFalse(app.buttons["Устройство без имени"].exists)
-        app.buttons["extended-discovery"].tap()
+        let extended = app.buttons["extended-discovery"]
+        for _ in 0..<3 where !extended.isHittable { app.swipeUp() }
+        extended.tap()
         XCTAssertTrue(app.buttons["Устройство без имени"].waitForExistence(timeout: responseTimeout))
         snapshot(app, named: "02-Adapter-Discovery")
         app.buttons["close-adapter-setup"].tap()
@@ -47,9 +49,9 @@ final class DashboardUITests: XCTestCase {
         let temperature = app.staticTexts["coolant-value"]
         let rpm = app.staticTexts["rpm-value"]
         let voltage = app.staticTexts["voltage-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: responseTimeout))
-        XCTAssertTrue(rpm.waitForLabel(matching: "[0-9]+", timeout: responseTimeout))
-        XCTAssertTrue(voltage.waitForLabel(matching: ".+ В", timeout: responseTimeout))
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
+        XCTAssertTrue(rpm.waitForLabel(matching: ".+ оборотов в минуту", timeout: responseTimeout))
+        XCTAssertTrue(voltage.waitForLabel(matching: ".+ вольт", timeout: responseTimeout))
         XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
         XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout))
@@ -63,11 +65,15 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testLightDashboardAndNavigation() {
         let app = launch(scenario: "warmup", appearance: "light")
-        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ В", timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ вольт", timeout: responseTimeout))
+        let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
+        XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout))
+        XCTAssertLessThanOrEqual(chart.frame.maxY, app.frame.maxY - 25)
         snapshot(app, named: "05-Driving-Light")
 
         app.buttons["history-nav"].tap()
         XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         snapshot(app, named: "06-Trip-History")
         app.navigationBars.buttons.firstMatch.tap()
 
@@ -85,6 +91,9 @@ final class DashboardUITests: XCTestCase {
         diagnostics.tap()
         let pid = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
         XCTAssertTrue(pid.waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "0100")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
+        XCTAssertFalse(app.staticTexts["Bluetooth"].exists)
         snapshot(app, named: "08-Diagnostics")
     }
 
@@ -99,6 +108,7 @@ final class DashboardUITests: XCTestCase {
         if !stepper.isHittable { app.swipeDown() }
         stepper.buttons.element(boundBy: 1).tap()
         XCTAssertTrue(stepper.waitForTemperature(106, timeout: responseTimeout))
+        for _ in 0..<3 where !reset.isHittable { app.swipeUp() }
         reset.tap()
         XCTAssertTrue(stepper.waitForTemperature(105, timeout: responseTimeout))
     }
@@ -120,6 +130,44 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "10-Lost-Connection")
     }
 
+    @MainActor func testReconnectReplacesMissingTemperatureWithFreshSample() {
+        let app = launch(scenario: "reconnect")
+        let value = app.staticTexts["coolant-value"]
+        XCTAssertTrue(value.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
+        XCTAssertTrue(value.wait(for: \.label, toEqual: "Нет свежих данных", timeout: responseTimeout))
+        XCTAssertTrue(value.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
+        snapshot(app, named: "13-Recovered")
+    }
+
+    #if !CARGAUGE_BASIC
+    @MainActor func testGlanceSurfacesExpireAndActivityWorksWithoutGroup() {
+        let app = launch(options: ["--glance-preview-fixture"])
+        func surface(_ id: String) -> XCUIElement { app.descendants(matching: .any)[id].firstMatch }
+        func expect(_ label: String, in element: XCUIElement) {
+            XCTAssertTrue(element.waitForLabel(matching: "(?s).*" + label + ".*", timeout: responseTimeout))
+        }
+
+        let widget = surface("glance-widget")
+        let activity = surface("glance-small-activity")
+        let lock = surface("glance-lock-activity")
+        for item in [widget, activity, lock] { expect("92", in: item) }
+        snapshot(app, named: "14-Glance-Fresh")
+
+        app.buttons["glance-fixture-stale"].tap()
+        for item in [widget, activity, lock] {
+            expect("Нет свежих данных", in: item)
+            XCTAssertFalse(item.label.contains("92"))
+        }
+        snapshot(app, named: "15-Glance-Stale")
+
+        app.buttons["glance-fixture-no-group"].tap()
+        expect("Данные недоступны", in: widget)
+        expect("92", in: activity)
+        expect("92", in: lock)
+        snapshot(app, named: "16-Glance-No-Group")
+    }
+    #endif
+
     @MainActor func testZeroRPMLeadsToParkedState() {
         let app = launch(scenario: "engineOff")
         guard app.staticTexts["Двигатель не работает"].waitForExistence(timeout: responseTimeout) else {
@@ -136,7 +184,7 @@ final class DashboardUITests: XCTestCase {
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXL",
         ])
         let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ °C", timeout: responseTimeout))
+        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
         snapshot(app, named: "12-Dynamic-Type")
         let voltage = app.staticTexts["voltage-value"]
         for _ in 0..<4 where !voltage.isHittable { app.swipeUp() }
@@ -162,7 +210,7 @@ final class DashboardUITests: XCTestCase {
     #else
     @MainActor func testReleaseIgnoresTestLaunchFlags() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture"]
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture", "--glance-preview-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
@@ -173,12 +221,14 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testReleaseUpgradeRetainsPreferences() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture"]
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture", "--glance-preview-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         app.buttons["settings-nav"].tap()
-        XCTAssertTrue(app.staticTexts["Vgate iCar Pro BLE (CI)"].waitForExistence(timeout: responseTimeout))
+        let adapter = app.descendants(matching: .any)["configured-adapter"].firstMatch
+        XCTAssertTrue(adapter.waitForExistence(timeout: responseTimeout))
+        XCTAssertEqual(adapter.value as? String, "Vgate iCar Pro BLE (CI)")
         let automatic = app.switches["auto-connect"]
         XCTAssertTrue(automatic.waitForExistence(timeout: responseTimeout))
         XCTAssertEqual(automatic.value as? String, "0")

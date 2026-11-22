@@ -20,6 +20,10 @@ struct WidgetSnapshot: Codable {
 
     // The widget is a dated snapshot. Its reloads are scheduled by WidgetKit.
     var expiration: Date { sampleDate.addingTimeInterval(60) }
+
+    func isCurrent(at date: Date) -> Bool {
+        date < expiration && date >= sampleDate.addingTimeInterval(-1)
+    }
 }
 
 enum WidgetSnapshotStore {
@@ -43,7 +47,8 @@ enum WidgetSnapshotStore {
     @discardableResult static func write(_ snapshot: WidgetSnapshot) -> Bool {
         guard let file, let data = try? JSONEncoder().encode(snapshot) else { return false }
         do {
-            try data.write(to: file, options: .atomic)
+            // A CarPlay session may continue when the driver locks an already-unlocked iPhone.
+            try data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             return true
         } catch {
             return false

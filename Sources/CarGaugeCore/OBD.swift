@@ -9,6 +9,27 @@ public enum OBDPID: String, CaseIterable, Sendable {
     var payloadBytes: Int { self == .coolant ? 1 : 2 }
 }
 
+public enum OBDSupportPage: String, CaseIterable, Sendable {
+    case pids01To20 = "0100"
+    case pids41To60 = "0140"
+
+    var responsePrefix: String { "41" + rawValue.suffix(2) }
+    var firstPID: Int { self == .pids01To20 ? 0x01 : 0x41 }
+}
+
+public struct OBDSupportMask: Equatable, Sendable {
+    public let page: OBDSupportPage
+    public let bits: UInt32
+
+    /// A negative mask is informational; an ECU that responds to a direct query wins.
+    public func reportsSupport(for pid: OBDPID) -> Bool? {
+        guard let code = Int(pid.rawValue.suffix(2), radix: 16) else { return nil }
+        let index = code - page.firstPID
+        guard (0..<32).contains(index) else { return nil }
+        return (bits & (0x8000_0000 >> index)) != 0
+    }
+}
+
 public enum OBDError: Error, Equatable, Sendable, LocalizedError {
     case disconnected, timeout, busy, noData, unsupported, malformedResponse, ambiguousResponse, bufferOverflow
     case adapter(String)
@@ -132,6 +153,21 @@ public enum OBDDecoder {
         guard let first = values.first else { throw OBDError.malformedResponse }
         guard values.allSatisfy({ $0 == first }) else { throw OBDError.ambiguousResponse }
         return first
+    }
+
+    public static func supportMask(_ page: OBDSupportPage, response: String) throws -> OBDSupportMask {
+        let lines = try lines(response, echo: page.rawValue)
+        var reported: UInt32?
+        for line in lines {
+            let payload = line.dropFirst(4)
+            guard line.hasPrefix(page.responsePrefix), payload.count == 8,
+                  payload.allSatisfy({ $0.isASCII && $0.isHexDigit }),
+                  let mask = UInt32(payload, radix: 16) else { throw OBDError.malformedResponse }
+            guard reported == nil || reported == mask else { throw OBDError.ambiguousResponse }
+            reported = mask
+        }
+        guard let reported else { throw OBDError.malformedResponse }
+        return OBDSupportMask(page: page, bits: reported)
     }
 
     public static func adapterVoltage(_ response: String) throws -> Double {

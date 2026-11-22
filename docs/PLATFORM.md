@@ -1,6 +1,6 @@
 # CarPlay, фон и целевое оборудование
 
-Источники проверены 21 ноября 2026 года.
+Источники проверены 22 ноября 2026 года. [Матрица CarPlay 0.6.0 и проверка подписи](CARPLAY.md).
 
 | Поверхность | Что доступно | Ограничение для CarGauge |
 | --- | --- | --- |
@@ -19,9 +19,9 @@ Apple указывает App Groups в колонке Apple Developer, кото�
 
 CarGauge запоминает UUID, проверяет системный список подключённых устройств и кэш CoreBluetooth, затем сканирует по тому же UUID. В активном приложении поиск видит также устройства без объявленного UUID сервиса. Если iOS выдала периферии другой UUID, нужно выбрать адаптер повторно. Характеристики выбираются из известных кандидатов по UUID и проверенным свойствам записи и уведомлений. При неизвестном профиле диагностика показывает найденные UUID сервисов.
 
-State Preservation and Restoration предназначена для управляемых iOS подключений, сканов и подписок с долгоживущим менеджером и стабильным идентификатором. Текущий ELM-менеджер заменяется после тайм-аута и отмены, чтобы запоздавший ответ не попал в соседний сеанс. В этом RC применяется восстановление при открытии приложения. Системное восстановление потребует отдельного владельца BLE и проверки на физическом адаптере. Принудительное закрытие пользователем останавливает фоновое восстановление по CoreBluetooth. [Руководство CoreBluetooth](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html), [Apple QA1962](https://developer.apple.com/library/archive/qa/qa1962/_index.html).
+State Preservation and Restoration предназначена для управляемых iOS подключений, сканов и подписок с долгоживущим менеджером и стабильным идентификатором. Текущий ELM-менеджер заменяется после тайм-аута и отмены, чтобы запоздавший ответ не попал в соседний сеанс. CarGauge восстанавливает сеанс при активации приложения или после повторного включения Bluetooth. Системное восстановление после выгрузки потребует долгоживущего владельца BLE и проверки на физическом адаптере. Apple описывает особые условия перезапуска iOS 26 для аксессуаров в AccessorySetupKit. Данный адаптер использует обычный путь Core Bluetooth. [Руководство CoreBluetooth](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html), [Apple TN3115](https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules).
 
-Для личной автоматизации на iPhone откройте **Команды → Автоматизация**, создайте триггер **CarPlay → Подключается**, выберите немедленный запуск и добавьте действие **Открыть приложение → CarGauge**. Триггер CarPlay поддерживает запуск без запроса. Выполнение действия при заблокированном экране и после принудительного закрытия предстоит проверить на iOS 27.2 и целевой магнитоле. [Триггер CarPlay](https://support.apple.com/en-euro/guide/shortcuts/apd8ebfc4e8e/ios), [Автоматический запуск в Командах](https://support.apple.com/guide/shortcuts/add-automations-apdfbdbd7123/ios).
+Для личной автоматизации на iPhone откройте **Команды → Автоматизация**, создайте триггер **CarPlay → Подключается**, выберите немедленный запуск и добавьте действие CarGauge **Открыть приборы** или системное **Открыть приложение → CarGauge**. Триггер CarPlay поддерживает запуск без запроса. Выполнение действия при заблокированном экране и после принудительного закрытия предстоит проверить на iOS 27.2 и целевой магнитоле. [Триггер CarPlay](https://support.apple.com/en-euro/guide/shortcuts/apd8ebfc4e8e/ios), [Автоматический запуск в Командах](https://support.apple.com/guide/shortcuts/add-automations-apdfbdbd7123/ios).
 
 ## Физический iPhone и RC 0.4.0
 
@@ -40,3 +40,7 @@ State Preservation and Restoration предназначена для управ�
 Apple различает локальное имя из рекламы BLE и имя GAP, доступное через `CBPeripheral.name`. При поиске CarGauge предпочитает локальное имя, сохраняет его между пакетами одного поиска и при его отсутствии использует доступное имя CoreBluetooth. Отображаемое имя служит подсказкой при выборе. Фактическое имя и профиль пользовательского Vgate остаются **UNVERIFIED** до проверки на устройстве. [Локальное имя BLE](https://developer.apple.com/documentation/corebluetooth/cbadvertisementdatalocalnamekey), [Имя CBPeripheral](https://developer.apple.com/documentation/corebluetooth/cbperipheral/name).
 
 В документации Vgate для iCar Pro BLE 4.0 перечислены имена `IOS-VLINK` и `ANDROID-VLINK`. Поиск помечает `IOS-VLINK` как вероятный OBD-II адаптер. Имя с явной пометкой Android остаётся среди других устройств, если его сообщает CoreBluetooth. [Vgate iCar Pro BLE 4.0](https://www.vgatemall.com/products-detail/i-9/).
+
+## Сеанс 0.6.0
+
+`0100` и `0140` опрашиваются последовательно после прямых замеров на переднем плане. Ответы отображаются в диагностике. Поддержка температурного, оборотного и напряженческого PID определяется фактическим ответом каждого измерения. Зависший запрос закрывает несинхронизированный BLE-канал. Приложение восстанавливает его в пределах бюджета повторов. На фоне незавершённое подключение приостанавливается, а установленный сеанс запрашивает данные с интервалом не менее двух секунд. Фактические интервалы зависят от iOS и самого адаптера.

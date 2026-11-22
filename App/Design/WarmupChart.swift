@@ -4,7 +4,7 @@ import SwiftUI
 
 struct WarmupChart: View {
     @Environment(\.gaugePalette) private var palette
-    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 110
+    @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 148
     @ScaledMetric(relativeTo: .caption) private var historyHeight: CGFloat = 208
     let points: [WarmupHistory.Point]
     let thresholds: ThermalThresholds
@@ -73,7 +73,8 @@ struct WarmupChart: View {
         .chartYScale(domain: low...high)
         .chartXAxis {
             AxisMarks(values: ticks) { value in
-                AxisGridLine().foregroundStyle(palette.line.opacity(0.55))
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                    .foregroundStyle(palette.line.opacity(0.55))
                 AxisValueLabel(anchor: .top, collisionResolution: .greedy) {
                     if let seconds = value.as(Double.self) {
                         Text(durationLabel(seconds))
@@ -85,7 +86,7 @@ struct WarmupChart: View {
         }
         .chartYAxis {
             AxisMarks(position: .leading, values: .automatic(desiredCount: compact ? 3 : 5)) { value in
-                AxisGridLine().foregroundStyle(palette.line)
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(palette.line)
                 AxisValueLabel {
                     if let temperature = value.as(Double.self) {
                         Text("\(Int(temperature))°").font(.caption2.monospacedDigit()).foregroundStyle(palette.muted)

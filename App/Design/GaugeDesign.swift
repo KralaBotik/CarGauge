@@ -26,30 +26,25 @@ enum GaugeSpacing {
     static let small: CGFloat = 8
     static let medium: CGFloat = 12
     static let large: CGFloat = 16
-    static let page: CGFloat = 20
+    static let page: CGFloat = 22
     static let section: CGFloat = 24
-    static let corner: CGFloat = 20
 }
 
 struct GaugePalette {
     let scheme: ColorScheme
 
-    var canvas: Color { pair(0x111A1F, 0xEDF1F0) }
-    var panel: Color { pair(0x1A262C, 0xF9FBFA) }
-    var raised: Color { pair(0x243239, 0xE1E8E7) }
-    var instrumentTop: Color { pair(0x263942, 0xFFFFFF) }
-    var instrumentBottom: Color { pair(0x19252B, 0xE6EFEE) }
-    var line: Color { pair(0x3B5059, 0xBECBCB) }
-    var text: Color { pair(0xF3F6F4, 0x15292E) }
-    var muted: Color { pair(0xAEBDC5, 0x465D64) }
-    var accent: Color { pair(0xFFAE80, 0x8C3B21) }
-    var trace: Color { pair(0x9BDACB, 0x256C64) }
-    var warming: Color { pair(0xA7D5EF, 0x315E77) }
-    var operating: Color { pair(0xA9DCC2, 0x23634F) }
-    var warning: Color { pair(0xFFD08B, 0x815013) }
-    var critical: Color { pair(0xFFAA9C, 0x9D332A) }
-    var action: Color { pair(0xFFAE80, 0x8C3B21) }
-    var actionText: Color { pair(0x291A16, 0xFFFFFF) }
+    var canvas: Color { pair(0x10171F, 0xF1F3F2) }
+    var panel: Color { pair(0x1A2730, 0xE1E8E6) }
+    var line: Color { pair(0x40545B, 0xB7C6C5) }
+    var text: Color { pair(0xF1F7F6, 0x132927) }
+    var muted: Color { pair(0xA7BEC3, 0x425957) }
+    var accent: Color { pair(0x77E2CC, 0x095E51) }
+    var trace: Color { accent }
+    var warming: Color { pair(0xA1CAF2, 0x315D79) }
+    var operating: Color { pair(0x88DEC0, 0x1C624E) }
+    var warning: Color { pair(0xFFD18A, 0x84500F) }
+    var critical: Color { pair(0xFFA497, 0x9D3029) }
+    var actionText: Color { pair(0x102720, 0xFFFFFF) }
 
     func tone(for state: EngineTemperatureState) -> Color {
         switch state {
@@ -78,45 +73,50 @@ extension EnvironmentValues {
     }
 }
 
-struct GaugePanel<Content: View>: View {
+struct GaugeRule: View {
     @Environment(\.gaugePalette) private var palette
-    var instrument = false
-    var inset: CGFloat = GaugeSpacing.large
+
+    var body: some View {
+        Rectangle()
+            .fill(palette.line.opacity(0.75))
+            .frame(height: 1)
+            .accessibilityHidden(true)
+    }
+}
+
+struct GaugeSection<Content: View>: View {
+    @Environment(\.gaugePalette) private var palette
+    let title: String
+    var headerID: String?
     @ViewBuilder var content: Content
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: GaugeSpacing.corner)
-        content
-            .padding(inset)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                if instrument {
-                    shape.fill(LinearGradient(colors: [palette.instrumentTop, palette.instrumentBottom],
-                                              startPoint: .topLeading, endPoint: .bottomTrailing))
-                } else {
-                    shape.fill(palette.panel)
-                }
-            }
-            .overlay { shape.strokeBorder(palette.line, lineWidth: 1).allowsHitTesting(false) }
+        VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
+            GaugeRule()
+            let heading = Text(title)
+                .font(.headline)
+                .foregroundStyle(palette.text)
+                .accessibilityAddTraits(.isHeader)
+            if let headerID { heading.accessibilityIdentifier(headerID) } else { heading }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct GaugePage<Content: View>: View {
     @Environment(\.gaugePalette) private var palette
+    var spacing: CGFloat = GaugeSpacing.large
     @ViewBuilder var content: Content
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                content
-            }
-            .frame(maxWidth: 560, alignment: .leading)
-            .padding(.horizontal, GaugeSpacing.page)
-            .padding(.top, GaugeSpacing.medium)
-            .padding(.bottom, GaugeSpacing.section)
-            .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: spacing) { content }
+                .padding(.horizontal, GaugeSpacing.page)
+                .padding(.vertical, GaugeSpacing.medium)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }
-        .scrollIndicators(.hidden)
         .background(palette.canvas.ignoresSafeArea())
         .foregroundStyle(palette.text)
     }
@@ -128,10 +128,11 @@ struct GaugeHeading: View {
     var subtitle: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-            Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+        VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+            Text(title).font(.largeTitle.weight(.semibold)).tracking(-0.6).accessibilityAddTraits(.isHeader)
             if let subtitle {
-                Text(subtitle).font(.subheadline).foregroundStyle(palette.muted)
+                Text(subtitle).font(.body).foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -163,7 +164,7 @@ struct SourceIndicator: View {
         Label(source == .simulator ? "Тестовые данные" : "Автомобиль",
               systemImage: source == .simulator ? "flask" : "car.side")
             .font(.caption.weight(.semibold))
-            .foregroundStyle(source == .simulator ? palette.accent : palette.muted)
+            .foregroundStyle(source == .simulator ? palette.warning : palette.muted)
             .accessibilityIdentifier("source-indicator")
     }
 }
@@ -175,13 +176,14 @@ struct GaugeActionStyle: ButtonStyle {
     var emphasized = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        let solid = emphasized && isEnabled
+        return configuration.label
             .font(.subheadline.weight(.semibold))
             .padding(.horizontal, GaugeSpacing.medium)
             .padding(.vertical, GaugeSpacing.small)
             .frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(!isEnabled ? palette.muted : emphasized ? palette.actionText : palette.text)
-            .background(emphasized && isEnabled ? palette.action : palette.raised, in: RoundedRectangle(cornerRadius: 14))
+            .foregroundStyle(!isEnabled ? palette.muted : solid ? palette.actionText : palette.text)
+            .background(solid ? palette.accent : palette.panel, in: RoundedRectangle(cornerRadius: 10))
             .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }

@@ -6,28 +6,30 @@ struct GaugeHistoryView: View {
     @ObservedObject var model: DashboardModel
 
     var body: some View {
-        GaugePage {
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                    Text("Температура за сеанс").font(.headline)
-                    Text("До 30 минут · пропуски видны на графике").font(.caption).foregroundStyle(palette.muted)
-                    WarmupChart(points: model.history, thresholds: model.thresholds, compact: false,
-                                alert: model.level, tripStartedAt: model.tripStartedAt)
-                }
-            }
+        GaugePage(spacing: GaugeSpacing.section) {
             if let first = model.history.first, let last = model.history.last {
-                GaugePanel {
-                    VStack(spacing: GaugeSpacing.medium) {
-                        LabeledContent("Первый замер", value: "\(Int(first.reading.value)) °C")
-                        LabeledContent("Последний замер", value: "\(Int(last.reading.value)) °C")
-                        if let maximum = model.history.map(\.reading.value).max() {
-                            LabeledContent("Максимум", value: "\(Int(maximum)) °C")
-                        }
+                GaugeHeading(title: "Температура за сеанс", subtitle: "До 30 минут текущей или последней поездки.")
+                #if DEBUG
+                if model.source == .simulator { SourceIndicator(source: model.source) }
+                #endif
+                WarmupChart(points: model.history, thresholds: model.thresholds, compact: false,
+                            alert: model.level, tripStartedAt: model.tripStartedAt)
+                GaugeSection(title: "Сводка замеров") {
+                    LabeledContent("В начале", value: "\(Int(first.reading.value)) °C")
+                    LabeledContent("Последний замер", value: "\(Int(last.reading.value)) °C")
+                    if let maximum = model.history.map(\.reading.value).max() {
+                        LabeledContent("Максимум", value: "\(Int(maximum)) °C")
                     }
-                    .font(.subheadline)
-                    .monospacedDigit()
                 }
+                .monospacedDigit()
                 .accessibilityIdentifier("session-history")
+            } else {
+                Image(systemName: "chart.xyaxis.line")
+                    .font(.system(size: 34, weight: .light))
+                    .foregroundStyle(palette.accent)
+                    .accessibilityHidden(true)
+                GaugeHeading(title: "Температура за сеанс",
+                             subtitle: "Здесь появится график, когда CarGauge получит температуру от автомобиля.")
             }
         }
         .accessibilityIdentifier("history-screen")
@@ -40,52 +42,53 @@ struct GaugeDiagnosticsView: View {
     @ObservedObject var ble: BLETransport
 
     var body: some View {
-        GaugePage {
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                    Text("Соединение").font(.headline)
-                    LabeledContent("Адаптер", value: model.configuredName ?? (model.hasConfiguredAdapter ? "Сохранён" : "Не настроен"))
-                    Text(ble.diagnostic).foregroundStyle(palette.muted)
-                    LabeledContent("Этап проверки", value: model.adapterStage)
-                    Text(model.status)
-                        .foregroundStyle(palette.muted)
-                        .accessibilityIdentifier("diagnostic-status")
+        GaugePage(spacing: GaugeSpacing.section) {
+            GaugeHeading(title: model.connectionTitle, subtitle: model.status)
+                .accessibilityIdentifier("diagnostic-status")
+
+            #if DEBUG
+            if model.source == .simulator { SourceIndicator(source: model.source) }
+            #endif
+            if model.source == .vehicle {
+                GaugeSection(title: "Соединение") {
+                    diagnosticField("Адаптер", model.configuredName ?? (model.hasConfiguredAdapter ? "Сохранён" : "Не настроен"))
+                    diagnosticField("Bluetooth", ble.diagnostic)
+                    diagnosticField("Обмен с автомобилем", model.adapterStage)
                 }
-                .font(.subheadline)
             }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                    Text("Параметры OBD-II").font(.headline)
-                    LabeledContent("Температура ОЖ", value: "PID 0105")
-                        .accessibilityIdentifier("coolant-pid")
-                    LabeledContent("Обороты", value: "PID 010C")
-                    LabeledContent("Напряжение", value: voltageSource)
-                }
-                .font(.subheadline)
+
+            GaugeSection(title: "Параметры OBD-II") {
+                LabeledContent("Температура ОЖ", value: "PID 0105")
+                    .accessibilityIdentifier("coolant-pid")
+                LabeledContent("Обороты", value: "PID 010C")
+                LabeledContent("Напряжение", value: voltageSource)
+                diagnosticField("Маски поддержки PID", model.pidSupportSummary)
+                    .accessibilityIdentifier("pid-support-summary")
             }
             #if !CARGAUGE_BASIC
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Виджет").font(.headline)
-                    Text(model.widgetContainerAvailable
-                         ? "Приложение видит общий контейнер. Проверьте показания в самом виджете."
-                         : "Общий контейнер недоступен. Для виджета нужна подпись Full с App Groups.")
-                        .font(.subheadline)
-                        .foregroundStyle(palette.muted)
-                        .accessibilityIdentifier("widget-container-state")
-                }
+            GaugeSection(title: "Общий контейнер виджета") {
+                Text(model.widgetContainerAvailable
+                     ? "Доступен приложению. Откройте виджет, чтобы проверить обмен."
+                     : "Недоступен после текущей подписи. Виджету нужен общий App Group приложения и расширения.")
+                    .font(.subheadline)
+                    .foregroundStyle(palette.muted)
+                    .accessibilityIdentifier("widget-container-state")
             }
             #endif
         }
         .accessibilityIdentifier("diagnostics-screen")
     }
 
-    private var voltageSource: String {
-        switch model.supplementary?.voltageSource {
-        case .ecu: "ECU · PID 0142"
-        case .adapter: "Адаптер · ATRV"
-        case nil: "0142 / ATRV"
+    private func diagnosticField(_ name: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(name).font(.caption).foregroundStyle(palette.muted)
+            Text(value).font(.subheadline)
         }
+    }
+
+    private var voltageSource: String {
+        guard let snapshot = model.supplementary, snapshot.voltage != nil else { return "0142 / ATRV" }
+        return snapshot.voltageSource == .ecu ? "ЭБУ · PID 0142" : "Адаптер · ATRV"
     }
 }
 
@@ -99,92 +102,92 @@ struct GaugeSettingsView: View {
     @State private var confirmsReset = false
 
     var body: some View {
-        GaugePage {
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Адаптер OBD-II").font(.headline)
-                    if let name = model.configuredName {
-                        Text(name).font(.subheadline).foregroundStyle(palette.muted)
-                    }
-                    Button(model.hasConfiguredAdapter ? "Сменить адаптер" : "Найти адаптер", action: showAdapter)
+        GaugePage(spacing: GaugeSpacing.section) {
+            GaugeSection(title: "Автомобиль") {
+                if let name = model.configuredName {
+                    LabeledContent("Адаптер", value: name)
+                        .font(.subheadline)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Сохранённый адаптер")
+                        .accessibilityValue(Text(verbatim: name))
+                        .accessibilityIdentifier("configured-adapter")
+                }
+                Toggle("Подключаться при открытии", isOn: $model.autoConnect)
+                    .tint(palette.operating)
+                    .accessibilityIdentifier("auto-connect")
+                Button(model.hasConfiguredAdapter ? "Сменить адаптер" : "Найти адаптер", action: showAdapter)
+                    .buttonStyle(GaugeActionStyle())
+                    .accessibilityIdentifier("change-adapter")
+                if model.isRunning {
+                    Button("Остановить измерения") { model.stop() }
                         .buttonStyle(GaugeActionStyle())
-                        .accessibilityIdentifier("change-adapter")
-                    Toggle("Подключаться при открытии", isOn: $model.autoConnect)
-                        .tint(palette.operating)
-                        .accessibilityIdentifier("auto-connect")
-                    if model.isRunning {
-                        Button("Остановить измерения") { model.stop() }
-                            .buttonStyle(GaugeActionStyle())
-                            .accessibilityIdentifier("stop-measurement")
-                    }
-                    if model.canRetryConnection {
-                        Button("Забыть адаптер", role: .destructive) { confirmsReset = true }
-                            .accessibilityIdentifier("forget-adapter")
-                    }
+                        .accessibilityIdentifier("stop-measurement")
+                }
+                if model.canRetryConnection {
+                    Button("Забыть адаптер", role: .destructive) { confirmsReset = true }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("forget-adapter")
                 }
             }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Оформление").font(.headline)
-                    Picker("Тема", selection: $appearance) {
-                        ForEach(GaugeAppearance.allCases, id: \.rawValue) { option in
-                            Text(option.title).tag(option)
-                        }
+
+            GaugeSection(title: "Оформление") {
+                Picker("Тема", selection: $appearance) {
+                    ForEach(GaugeAppearance.allCases, id: \.rawValue) { option in
+                        Text(option.title).tag(option)
                     }
-                    .pickerStyle(.segmented)
-                    .accessibilityIdentifier("appearance-picker")
                 }
+                .pickerStyle(.menu)
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("appearance-picker")
             }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                    Text("Температурные пороги").font(.headline).accessibilityAddTraits(.isHeader)
-                    thresholdStepper(.operating, title: "Рабочая температура", id: "operating-threshold")
-                    thresholdStepper(.warning, title: "Предупреждение", id: "warning-threshold")
-                    thresholdStepper(.critical, title: "Перегрев", id: "critical-threshold")
-                    Button("Восстановить исходные пороги") { model.resetThresholds() }
-                        .buttonStyle(GaugeActionStyle())
-                        .disabled(model.thresholds == .standard)
-                        .accessibilityIdentifier("reset-thresholds")
-                    Text("Это пороги CarGauge. Сверяйтесь со штатной индикацией автомобиля.")
-                        .font(.caption)
-                        .foregroundStyle(palette.muted)
-                }
+
+            GaugeSection(title: "Температурные пороги") {
+                thresholdStepper(.operating, title: "Рабочая температура", id: "operating-threshold")
+                thresholdStepper(.warning, title: "Предупреждение", id: "warning-threshold")
+                thresholdStepper(.critical, title: "Перегрев", id: "critical-threshold")
+                Button("Восстановить исходные пороги") { model.resetThresholds() }
+                    .buttonStyle(GaugeActionStyle())
+                    .disabled(model.thresholds == .standard)
+                    .accessibilityIdentifier("reset-thresholds")
+                Text("Пороги задают предупреждения CarGauge. Сверяйтесь со штатной индикацией автомобиля.")
+                    .font(.caption).foregroundStyle(palette.muted)
             }
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Уведомления").font(.headline)
-                    Button("Разрешить предупреждения о температуре") {
-                        Task { await model.requestWarningNotifications() }
+
+            #if !CARGAUGE_BASIC
+            GaugeSection(title: "Экран блокировки и CarPlay") {
+                Toggle("Автоматическая Live Activity", isOn: $model.autoLiveActivity)
+                    .tint(palette.operating)
+                    .accessibilityIdentifier("auto-live-activity")
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Button(model.activityIsRunning ? "Завершить Live Activity" : "Начать Live Activity") {
+                        model.toggleActivity()
                     }
                     .buttonStyle(GaugeActionStyle())
+                    .disabled(!model.activityIsRunning && (!isActive || model.coolant?.isFresh(at: context.date) != true))
+                    .accessibilityIdentifier("live-activity-button")
                 }
-            }
-            #if !CARGAUGE_BASIC
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text("Экран блокировки и CarPlay").font(.headline)
-                    Toggle("Запускать Live Activity автоматически", isOn: $model.autoLiveActivity)
-                        .tint(palette.operating)
-                        .accessibilityIdentifier("auto-live-activity")
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Button(model.activityIsRunning ? "Завершить Live Activity" : "Начать Live Activity") {
-                            model.toggleActivity()
-                        }
-                        .buttonStyle(GaugeActionStyle())
-                        .disabled(!model.activityIsRunning && (!isActive || model.coolant?.isFresh(at: context.date) != true))
-                        .accessibilityIdentifier("live-activity-button")
-                    }
+                if let message = model.presentationMessage {
+                    Text(message).font(.footnote).foregroundStyle(palette.muted)
                 }
             }
             #endif
+
+            GaugeSection(title: "Уведомления") {
+                Button("Разрешить предупреждения о температуре") {
+                    Task { await model.requestWarningNotifications() }
+                }
+                .buttonStyle(GaugeActionStyle())
+                if let message = model.notificationMessage {
+                    Text(message).font(.footnote).foregroundStyle(palette.muted)
+                }
+            }
+
+            GaugeRule()
             Button(action: showDiagnostics) {
                 Label("Диагностика", systemImage: "waveform.path.ecg")
             }
             .buttonStyle(GaugeActionStyle())
             .accessibilityIdentifier("diagnostics-nav")
-            if let message = model.presentationMessage {
-                Text(message).font(.footnote).foregroundStyle(palette.muted)
-            }
         }
         .accessibilityIdentifier("settings-screen")
         .confirmationDialog("Забыть сохранённый адаптер?", isPresented: $confirmsReset, titleVisibility: .visible) {

@@ -10,7 +10,7 @@ struct GaugeAdapterSetupView: View {
     var body: some View {
         NavigationStack {
             AdapterList(model: model, ble: model.discoveryBLE)
-                .navigationTitle("Найти адаптер")
+                .navigationTitle("Подключение")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -66,12 +66,15 @@ private struct AdapterList: View {
     var body: some View {
         let nearby = devices
         GaugePage {
-            GaugeHeading(title: "Адаптеры рядом", subtitle: "Выберите свой адаптер. Сохраним его после первого замера.")
+            GaugeHeading(title: "Адаптеры рядом", subtitle: "Коснитесь своего адаптера. Сохраним его, когда автомобиль ответит.")
+            #if DEBUG
+            if model.discoveryFixture { SourceIndicator(source: .simulator) }
+            #endif
             if model.isCheckingSelection {
-                GaugePanel {
-                    ProgressView("Проверяем адаптер и ЭБУ…")
-                        .accessibilityIdentifier("validating-adapter")
-                }
+                GaugeRule()
+                ProgressView("Проверяем связь с автомобилем…")
+                    .tint(palette.accent)
+                    .accessibilityIdentifier("validating-adapter")
             } else {
                 discoveryStatus
                 deviceGroup("Вероятные OBD-II адаптеры", devices: nearby.filter(\.hasOBDName), id: "likely-adapters")
@@ -100,7 +103,8 @@ private struct AdapterList: View {
         }
         switch scanState {
         case .scanning:
-            ProgressView("Ищем адаптеры поблизости…").accessibilityIdentifier("scanning-adapters")
+            ProgressView("Ищем устройства…").tint(palette.accent)
+                .accessibilityIdentifier("scanning-adapters")
         case .poweredOff:
             Text("Включите Bluetooth на iPhone, затем обновите список.").foregroundStyle(palette.warning)
             Button("Обновить список") { model.discoverAdapters(extended: expanded) }
@@ -125,19 +129,13 @@ private struct AdapterList: View {
 
     @ViewBuilder private func deviceGroup(_ title: String, devices: [BLEDevice], id: String) -> some View {
         if !devices.isEmpty {
-            VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(palette.muted)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier(id)
+            GaugeSection(title: title, headerID: id) {
                 VStack(spacing: 0) {
                     ForEach(devices) { device in
                         adapterRow(device, among: devices)
-                        if device.id != devices.last?.id {
-                            Divider().overlay(palette.line).padding(.horizontal, GaugeSpacing.large)
-                        }
+                        if device.id != devices.last?.id { GaugeRule() }
                     }
                 }
-                .background(palette.panel, in: RoundedRectangle(cornerRadius: GaugeSpacing.corner))
             }
         }
     }
@@ -155,7 +153,7 @@ private struct AdapterList: View {
                 Image(systemName: device.hasOBDName ? "car.side" : "dot.radiowaves.left.and.right")
                     .imageScale(.medium)
                     .foregroundStyle(device.hasOBDName ? palette.accent : palette.muted)
-                    .frame(width: 32)
+                    .frame(width: 30)
                 VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
                     Text(title).font(.body.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
@@ -169,7 +167,6 @@ private struct AdapterList: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.muted)
             }
-            .padding(.horizontal, GaugeSpacing.medium)
             .padding(.vertical, GaugeSpacing.medium)
             .frame(minHeight: 52)
             .contentShape(Rectangle())
