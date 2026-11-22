@@ -5,6 +5,7 @@ struct TemperatureInstrument: View {
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .largeTitle) private var digitSize: CGFloat = 86
+    @ScaledMetric(relativeTo: .title) private var digitalDigitSize: CGFloat = 58
     let value: Double?
     let thresholds: ThermalThresholds
     let alert: ThermalLevel
@@ -30,9 +31,10 @@ struct TemperatureInstrument: View {
     }
 
     @ViewBuilder private var readout: some View {
-        Text("Охлаждающая жидкость")
+        Text(typeSize.isAccessibilitySize ? "Температура ОЖ" : "Охлаждающая жидкость")
             .font(.subheadline.weight(.medium))
             .foregroundStyle(palette.muted)
+            .accessibilityLabel("Температура охлаждающей жидкости")
             .accessibilityAddTraits(.isHeader)
         digits
         let presentation = statusContent
@@ -48,7 +50,7 @@ struct TemperatureInstrument: View {
     private var digits: some View {
         let number = value.map { String(Int($0)) } ?? "—"
         let digit = Text(number)
-            .font(.system(size: digitSize, weight: .semibold))
+            .font(.system(size: typeSize >= .xxLarge ? digitalDigitSize : digitSize, weight: .semibold))
             .monospacedDigit()
             .tracking(-3)
         let unit = Text("°C").font(.title2.weight(.medium)).foregroundColor(palette.muted)

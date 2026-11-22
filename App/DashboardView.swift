@@ -5,9 +5,9 @@ struct DashboardView: View {
     @ObservedObject var model: DashboardModel
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.locale) private var locale
     var previewDate: Date? = nil
     let showHistory: () -> Void
-    let showSettings: () -> Void
     let showAdapter: () -> Void
 
     var body: some View {
@@ -18,7 +18,6 @@ struct DashboardView: View {
             if needsAdapter {
                 adapterOnboarding
             } else {
-                connectionStatus
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     let now = previewDate ?? context.date
                     let coolant = model.phase == .parked ? nil : model.coolant?.gaugeValue(at: now)
@@ -55,82 +54,44 @@ struct DashboardView: View {
     }
 
     private var dashboardHeader: some View {
-        let navigation = ViewThatFits(in: .horizontal) {
-            HStack(spacing: GaugeSpacing.medium) { navigationActions }
-                .fixedSize(horizontal: true, vertical: false)
-            VStack(alignment: .leading, spacing: GaugeSpacing.small) { navigationActions }
-        }
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.small))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: GaugeSpacing.small))
-        return layout {
-            Text("CarGauge")
-                .font(.title.weight(.bold))
-                .tracking(-0.8)
-                .accessibilityAddTraits(.isHeader)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            navigation
-        }
-    }
+        let title = Text("CarGauge")
+            .font(.title3.weight(.bold))
+            .accessibilityAddTraits(.isHeader)
 
-    @ViewBuilder private var navigationActions: some View {
-        navigationButton("Поездка", symbol: "chart.xyaxis.line", id: "history-nav", action: showHistory)
-        navigationButton("Настройки", symbol: "gearshape", id: "settings-nav", action: showSettings)
-    }
-
-    private func navigationButton(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.body.weight(.medium))
-                Text(title).font(.caption2.weight(.medium))
+        return VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
+            if needsAdapter {
+                title
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: GaugeSpacing.large) {
+                        title.fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        connectionStatus.fixedSize(horizontal: true, vertical: false)
+                    }
+                    VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
+                        title
+                        connectionStatus
+                    }
+                }
+                #if DEBUG
+                if isSimulation { SourceIndicator(source: model.source) }
+                #endif
             }
-            .frame(minWidth: 48, minHeight: 44)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(palette.text)
-        .accessibilityLabel(title)
-        .accessibilityIdentifier(id)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var connectionStatus: some View {
         let (symbol, tone): (String, Color) = switch model.phase {
-        case .streaming: ("circle.fill", palette.operating)
+        case .streaming: ("checkmark.circle.fill", palette.operating)
         case .connecting, .retrying: ("dot.radiowaves.left.and.right", palette.accent)
         case .failed: ("exclamationmark.circle", palette.warning)
         case .parked, .stopped: ("pause.circle", palette.muted)
         case .idle, .awaitingAdapter: ("link", palette.muted)
         }
 
-        let status = GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
+        return GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
             .accessibilityIdentifier("connection-status")
-        let stacked = VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-            status
-            connectionAccessory
-        }
-        return Group {
-            if typeSize.isAccessibilitySize {
-                stacked
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: GaugeSpacing.medium) {
-                        status
-                        connectionAccessory
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                    stacked
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder private var connectionAccessory: some View {
-        #if DEBUG
-        if isSimulation {
-            SourceIndicator(source: model.source)
-        }
-        #endif
     }
 
     private var adapterOnboarding: some View {
@@ -192,17 +153,25 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: GaugeSpacing.large) {
             GaugeHeading(title: "Двигатель не работает",
                          subtitle: "Измерения приостановлены. Температура за поездку доступна на графике.")
-            Button("Возобновить измерения") { model.start() }
-                .buttonStyle(GaugeActionStyle())
-                .accessibilityIdentifier("resume-measurements")
+            Button {
+                model.start()
+            } label: {
+                Text("Возобновить измерения").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(GaugeActionStyle())
+            .accessibilityIdentifier("resume-measurements")
         }
         .padding(.vertical, GaugeSpacing.section)
     }
 
     private var retryButton: some View {
-        Button("Повторить подключение") { model.start(preservingHistory: true) }
-            .buttonStyle(GaugeActionStyle(emphasized: true))
-            .accessibilityIdentifier("retry-connection")
+        Button {
+            model.start(preservingHistory: true)
+        } label: {
+            Text("Повторить подключение").frame(maxWidth: .infinity)
+        }
+        .buttonStyle(GaugeActionStyle(emphasized: true))
+        .accessibilityIdentifier("retry-connection")
     }
 
     private var chartSection: some View {
@@ -211,8 +180,10 @@ struct DashboardView: View {
             Button(action: showHistory) {
                 HStack(spacing: GaugeSpacing.medium) {
                     VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-                        Text("Температура в поездке").font(.headline)
-                        Text("Последние 5 минут").font(.caption).foregroundStyle(palette.muted)
+                        Text(typeSize.isAccessibilitySize ? "График" : "Температура в поездке")
+                            .font(.headline)
+                        Text(typeSize.isAccessibilitySize ? "До 5 минут" : "Последние 5 минут")
+                            .font(.caption).foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: GaugeSpacing.small)
                     Image(systemName: "chevron.right")
@@ -224,6 +195,7 @@ struct DashboardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("График температуры в поездке")
             .accessibilityHint("Открывает историю замеров")
             .accessibilityIdentifier("chart-preview")
             WarmupChart(points: model.history, thresholds: model.thresholds, compact: true,
@@ -236,7 +208,7 @@ struct DashboardView: View {
         let rpm = model.supplementary?.rpm?.gaugeValue(at: now)
         let voltage = model.supplementary?.voltage?.gaugeValue(at: now)
         let rpmLabel = rpm.map { Int($0.rounded()).formatted(.number.grouping(.never)) }
-        let voltageLabel = voltage.map { $0.formatted(.number.precision(.fractionLength(1))) }
+        let voltageLabel = voltage.map { $0.formatted(.number.precision(.fractionLength(1)).locale(locale)) }
         let layout = typeSize >= .xxLarge
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.medium))
             : AnyLayout(HStackLayout(alignment: .top, spacing: GaugeSpacing.large))

@@ -617,7 +617,7 @@ enum MeasurementPhase {
 
 #if DEBUG
 extension DashboardModel {
-    static func preview(at now: Date, finalTemperature: Int = 91) -> DashboardModel {
+    static func preview(at now: Date, finalTemperature: Int = 92) -> DashboardModel {
         let model = DashboardModel()
         model.previewUsesSamples = true
         model.hasConfiguredAdapter = true
@@ -633,7 +633,7 @@ extension DashboardModel {
             model.accept(Reading(temperature.rounded(), at: now.addingTimeInterval(Double(index - 23) * 4)), source: .simulator)
         }
         if let coolant = model.coolant {
-            model.supplementary = TelemetrySnapshot(source: .simulator, coolant: coolant, rpm: Reading(846, at: now),
+            model.supplementary = TelemetrySnapshot(source: .simulator, coolant: coolant, rpm: Reading(850, at: now),
                                                    voltage: Reading(14.2, at: now), voltageSource: .ecu)
         }
         return model

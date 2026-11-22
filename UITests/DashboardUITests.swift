@@ -12,7 +12,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertEqual(find.label, "Найти адаптер")
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         XCTAssertFalse(app.staticTexts["rpm-value"].exists)
-        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        assertBottomNavigation(app)
         snapshot(app, named: "01-Onboarding")
     }
 
@@ -45,39 +45,28 @@ final class DashboardUITests: XCTestCase {
     }
 
     @MainActor func testDarkDashboardFitsBeforeScrolling() {
-        let app = launch(scenario: "warmup")
-        let temperature = app.staticTexts["coolant-value"]
-        let rpm = app.staticTexts["rpm-value"]
-        let voltage = app.staticTexts["voltage-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
-        XCTAssertTrue(rpm.waitForLabel(matching: ".+ оборотов в минуту", timeout: responseTimeout))
-        XCTAssertTrue(voltage.waitForLabel(matching: ".+ вольт", timeout: responseTimeout))
-        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
-        let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
-        XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout))
-        XCTAssertGreaterThan(chart.frame.height, 0)
-        XCTAssertLessThanOrEqual(chart.frame.maxY, app.frame.maxY - 25)
-        XCTAssertLessThan(temperature.frame.minY, rpm.frame.minY)
-        XCTAssertLessThan(rpm.frame.minY, chart.frame.minY)
-        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        let app = launch(options: ["--connected-dashboard-fixture"])
+        assertConnectedDashboard(app, includingChart: true)
         snapshot(app, named: "04-Driving-Dark")
     }
 
     @MainActor func testLightDashboardAndNavigation() {
-        let app = launch(scenario: "warmup", appearance: "light")
-        XCTAssertTrue(app.staticTexts["voltage-value"].waitForLabel(matching: ".+ вольт", timeout: responseTimeout))
-        let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
-        XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout))
-        XCTAssertLessThanOrEqual(chart.frame.maxY, app.frame.maxY - 25)
+        let app = launch(appearance: "light", options: ["--connected-dashboard-fixture"])
+        assertConnectedDashboard(app, includingChart: true)
         snapshot(app, named: "05-Driving-Light")
 
-        app.buttons["history-nav"].tap()
+        app.buttons["chart-preview"].tap()
         XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
         XCTAssertTrue(app.staticTexts["source-indicator"].exists)
+        XCTAssertTrue(app.buttons["history-nav"].isSelected)
         snapshot(app, named: "06-Trip-History")
-        app.navigationBars.buttons.firstMatch.tap()
 
+        app.buttons["instruments-nav"].tap()
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForExistence(timeout: responseTimeout))
+        app.buttons["history-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
         app.buttons["settings-nav"].tap()
+        XCTAssertTrue(app.buttons["settings-nav"].isSelected)
         XCTAssertTrue(app.staticTexts["Оформление"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.descendants(matching: .any)["simulation-scenario"].firstMatch.exists)
         snapshot(app, named: "07-Settings")
@@ -88,6 +77,8 @@ final class DashboardUITests: XCTestCase {
         #else
         XCTAssertTrue(app.switches["auto-live-activity"].exists)
         #endif
+        XCTAssertTrue(diagnostics.isHittable)
+        XCTAssertLessThanOrEqual(diagnostics.frame.maxY, app.buttons["settings-nav"].frame.minY)
         diagnostics.tap()
         let pid = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
         XCTAssertTrue(pid.waitForExistence(timeout: responseTimeout))
@@ -95,6 +86,10 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         XCTAssertFalse(app.staticTexts["Bluetooth"].exists)
         snapshot(app, named: "08-Diagnostics")
+        assertBottomNavigation(app)
+        app.buttons["instruments-nav"].tap()
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.buttons["instruments-nav"].isSelected)
     }
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {
@@ -179,16 +174,67 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "11-Parked")
     }
 
-    @MainActor func testAccessibilityTextKeepsValuesReachable() {
-        let app = launch(scenario: "warmup", options: [
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXL",
+    @MainActor func testAccessibilityTextKeepsValuesAboveNavigation() {
+        let app = launch(options: [
+            "--connected-dashboard-fixture",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL",
         ])
-        let temperature = app.staticTexts["coolant-value"]
-        XCTAssertTrue(temperature.waitForLabel(matching: "[0-9]+ градусов Цельсия", timeout: responseTimeout))
+        assertConnectedDashboard(app, includingChart: false)
         snapshot(app, named: "12-Dynamic-Type")
+    }
+
+    @MainActor func testLargestTextCanScrollToValuesWithNavigationAvailable() {
+        let app = launch(appearance: "light", options: [
+            "--connected-dashboard-fixture",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ])
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "92 градусов Цельсия", timeout: responseTimeout))
         let voltage = app.staticTexts["voltage-value"]
-        for _ in 0..<4 where !voltage.isHittable { app.swipeUp() }
+        for _ in 0..<5 where !voltage.isHittable { app.swipeUp() }
         XCTAssertTrue(voltage.isHittable)
+        assertBottomNavigation(app)
+        XCTAssertLessThanOrEqual(voltage.frame.maxY, app.buttons["settings-nav"].frame.minY)
+        snapshot(app, named: "17-Maximum-Text-Scrolled")
+    }
+
+    @MainActor private func assertConnectedDashboard(_ app: XCUIApplication, includingChart: Bool,
+                                                      file: StaticString = #filePath, line: UInt = #line) {
+        let gauges = [
+            ("coolant-value", "92 градусов Цельсия"),
+            ("rpm-value", "850 оборотов в минуту"),
+            ("voltage-value", "14,2 вольт"),
+        ]
+        let barTop = assertBottomNavigation(app, file: file, line: line)
+        for (identifier, label) in gauges {
+            let element = app.staticTexts[identifier]
+            XCTAssertTrue(element.wait(for: \.label, toEqual: label, timeout: responseTimeout), file: file, line: line)
+            XCTAssertTrue(element.isHittable, file: file, line: line)
+            XCTAssertLessThanOrEqual(element.frame.maxY, barTop, file: file, line: line)
+        }
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists, file: file, line: line)
+        XCTAssertTrue(app.buttons["instruments-nav"].isSelected, file: file, line: line)
+        if includingChart {
+            let chart = app.descendants(matching: .any)["warmup-plot"].firstMatch
+            XCTAssertTrue(chart.waitForExistence(timeout: responseTimeout), file: file, line: line)
+            XCTAssertGreaterThan(chart.frame.height, 0, file: file, line: line)
+            XCTAssertLessThan(app.staticTexts["rpm-value"].frame.minY, chart.frame.minY, file: file, line: line)
+            XCTAssertLessThanOrEqual(chart.frame.maxY, barTop, file: file, line: line)
+        }
+    }
+
+    @discardableResult
+    @MainActor private func assertBottomNavigation(_ app: XCUIApplication, file: StaticString = #filePath,
+                                                     line: UInt = #line) -> CGFloat {
+        let buttons = ["instruments-nav", "history-nav", "settings-nav"].map { app.buttons[$0] }
+        for button in buttons {
+            XCTAssertTrue(button.waitForExistence(timeout: responseTimeout), file: file, line: line)
+            XCTAssertTrue(button.isHittable, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44, file: file, line: line)
+            XCTAssertGreaterThan(button.frame.minY, app.frame.minY + app.frame.height * 0.75, file: file, line: line)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.frame.maxY - 22, file: file, line: line)
+        }
+        return buttons.map { $0.frame.minY }.min() ?? .zero
     }
 
     @MainActor func testLegacyUUIDAllowsManualConnectionWithoutDemo() {
@@ -210,7 +256,8 @@ final class DashboardUITests: XCTestCase {
     #else
     @MainActor func testReleaseIgnoresTestLaunchFlags() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture", "--glance-preview-fixture"]
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+                               "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
@@ -221,7 +268,8 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testReleaseUpgradeRetainsPreferences() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture", "--glance-preview-fixture"]
+        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+                               "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
