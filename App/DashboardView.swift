@@ -246,7 +246,7 @@ struct DashboardView: View {
                         id: "rpm-value")
             if typeSize >= .xxLarge { GaugeRule() }
             GaugeMetric(title: "Напряжение", value: voltageLabel, unit: "В", spokenUnit: "вольт",
-                        detail: voltage == nil ? nil : model.supplementary?.voltageSource == .adapter ? "По адаптеру" : "По ЭБУ",
+                        detail: voltage == nil ? nil : model.supplementary?.voltageSource == .adapter ? "Оценка адаптера" : "Блок управления",
                         id: "voltage-value")
         }
     }

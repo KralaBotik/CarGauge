@@ -23,6 +23,7 @@ enum MeasurementPhase {
     @Published private(set) var completedAdapterSelection: UUID?
     @Published private(set) var activityIsRunning = false
     @Published var presentationMessage: String?
+    @Published private(set) var notificationMessage: String?
     @Published var autoConnect = UserDefaults.standard.object(forKey: "autoConnect") == nil
         || UserDefaults.standard.bool(forKey: "autoConnect") {
         didSet { UserDefaults.standard.set(autoConnect, forKey: "autoConnect") }
@@ -400,9 +401,9 @@ enum MeasurementPhase {
     func requestWarningNotifications() async {
         do {
             allowsNotifications = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
-            presentationMessage = allowsNotifications ? "Уведомления разрешены" : "Уведомления выключены в настройках iPhone"
+            notificationMessage = allowsNotifications ? "Уведомления разрешены" : "Уведомления выключены в настройках iPhone"
         } catch {
-            presentationMessage = error.localizedDescription
+            notificationMessage = error.localizedDescription
         }
     }
 

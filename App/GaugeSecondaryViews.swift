@@ -164,6 +164,9 @@ struct GaugeSettingsView: View {
                     Task { await model.requestWarningNotifications() }
                 }
                 .buttonStyle(GaugeActionStyle())
+                if let message = model.notificationMessage {
+                    Text(message).font(.footnote).foregroundStyle(palette.muted)
+                }
             }
 
             GaugeRule()

@@ -35,7 +35,6 @@ struct GaugePalette {
 
     var canvas: Color { pair(0x10171F, 0xF1F3F2) }
     var panel: Color { pair(0x1A2730, 0xE1E8E6) }
-    var raised: Color { pair(0x23353E, 0xDFE8E5) }
     var line: Color { pair(0x40545B, 0xB7C6C5) }
     var text: Color { pair(0xF1F7F6, 0x132927) }
     var muted: Color { pair(0xA7BEC3, 0x425957) }
