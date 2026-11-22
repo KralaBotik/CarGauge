@@ -213,32 +213,76 @@ import Testing
 }
 
 @MainActor
-@Test func timeoutIdentifiesOptionalSensorAndNextLinkCanContinueWithoutIt() async throws {
-    let transport = ScriptedTransport()
-    transport.responses = ["ATZ": "ELM327 v2.3", "0105": "41057B", "010C": "410C0C80"]
-    transport.timedOutCommands = ["0142"]
-    let client = ELM327Client(transport: transport)
-    try await client.initialize()
-    let coolant = try await client.readCoolant()
+@Test func ecuVoltageTimeoutFallsBackOnlyAfterANewHandshake() async throws {
+    let responses = ["ATZ": "ELM327 v2.3", "0105": "41057B", "010C": "410C0C80", "ATRV": "14.1V"]
+    var recovery = SupplementaryRecovery()
+
+    let firstLink = ScriptedTransport()
+    firstLink.responses = responses
+    firstLink.timedOutCommands = ["0142"]
+    let firstClient = ELM327Client(transport: firstLink)
+    try await firstClient.initialize()
+    let firstCoolant = try await firstClient.readCoolant()
     do {
-        _ = try await client.readSupplementary(source: .vehicle, coolant: coolant)
-        Issue.record("Expected to identify the supplementary timeout")
-    } catch let error as SupplementaryTimeout {
-        #expect(error.sensor == .voltage)
-        transport.disconnect()
-        let replacement = ScriptedTransport()
-        replacement.responses = transport.responses
-        replacement.timedOutCommands = transport.timedOutCommands
-        let nextClient = ELM327Client(transport: replacement)
-        try await replacement.connect()
-        try await nextClient.initialize()
-        let next = try await nextClient.readCoolant()
-        let recovered = try await nextClient.readSupplementary(source: .vehicle, coolant: next, skipping: [error.sensor])
-        #expect(recovered.coolant.value == 83)
-        #expect(recovered.rpm?.value == 800)
-        #expect(recovered.voltage == nil)
-        #expect(!replacement.commands.contains("0142"))
+        _ = try await firstClient.readSupplementary(source: .vehicle, coolant: firstCoolant)
+        Issue.record("Expected to identify the ECU voltage timeout")
+    } catch let timeout as SupplementaryTimeout {
+        #expect(timeout == .ecuVoltage)
+        #expect(timeout.sensor == .voltage)
+        recovery.record(timeout)
     }
+    #expect(firstLink.commands.suffix(2) == ["010C", "0142"])
+    #expect(!firstLink.commands.contains("ATRV"))
+    #expect(recovery.initialVoltageSource == .adapter)
+    #expect(recovery.skippedSensors.isEmpty)
+    firstLink.disconnect()
+
+    let fallback = ScriptedTransport()
+    fallback.responses = responses
+    fallback.timedOutCommands = ["0142"]
+    let fallbackClient = ELM327Client(transport: fallback)
+    try await fallback.connect()
+    try await fallbackClient.initialize(voltageSource: recovery.initialVoltageSource)
+    let nextCoolant = try await fallbackClient.readCoolant()
+    let recovered = try await fallbackClient.readSupplementary(source: .vehicle, coolant: nextCoolant,
+                                                                skipping: recovery.skippedSensors)
+    #expect(recovered.coolant.value == 83)
+    #expect(recovered.rpm?.value == 800)
+    #expect(recovered.voltage?.value == 14.1)
+    #expect(recovered.voltageSource == .adapter)
+    #expect(fallback.commands == ELM327Client.initializationCommands + ["0105", "010C", "ATRV"])
+
+    fallback.timedOutCommands.insert("ATRV")
+    do {
+        _ = try await fallbackClient.readSupplementary(source: .vehicle, coolant: nextCoolant)
+        Issue.record("Expected to identify the adapter voltage timeout")
+    } catch let timeout as SupplementaryTimeout {
+        #expect(timeout == .adapterVoltage)
+        recovery.record(timeout)
+    }
+    #expect(recovery.skippedSensors == [.voltage])
+    fallback.disconnect()
+
+    let finalLink = ScriptedTransport()
+    finalLink.responses = responses
+    finalLink.timedOutCommands = ["0142", "ATRV"]
+    let finalClient = ELM327Client(transport: finalLink)
+    try await finalLink.connect()
+    try await finalClient.initialize(voltageSource: recovery.initialVoltageSource)
+    let lastCoolant = try await finalClient.readCoolant()
+    let finalReading = try await finalClient.readSupplementary(source: .vehicle, coolant: lastCoolant,
+                                                               skipping: recovery.skippedSensors)
+    #expect(finalReading.coolant.value == 83)
+    #expect(finalReading.rpm?.value == 800)
+    #expect(finalReading.voltage == nil)
+    #expect(finalLink.commands == ELM327Client.initializationCommands + ["0105", "010C"])
+}
+
+@Test func rpmTimeoutDoesNotChangeThePreferredVoltageRoute() {
+    var recovery = SupplementaryRecovery()
+    recovery.record(.rpm)
+    #expect(recovery.skippedSensors == [.rpm])
+    #expect(recovery.initialVoltageSource == .ecu)
 }
 
 @MainActor

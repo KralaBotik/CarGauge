@@ -97,6 +97,7 @@ enum MeasurementPhase {
     #endif
     private var session: Task<Void, Never>?
     private var transport: (any OBDTransport)?
+    private var supplementaryRecovery = SupplementaryRecovery()
     private var runID = UUID()
     private var monitor = OverheatMonitor()
     private var warmup = WarmupHistory()
@@ -259,6 +260,7 @@ enum MeasurementPhase {
         let previousLevel = level
         let previousMonitor = monitor
         let targetID = pendingAdapterID ?? adapterPreferences.preferredID
+        if !preservingHistory || pendingAdapterID != nil { supplementaryRecovery = SupplementaryRecovery() }
         stopSession(resetBLE: false)
         manuallyStopped = false
         supportResponses = [:]
@@ -423,7 +425,6 @@ enum MeasurementPhase {
         let source = source
         let startedAt = ContinuousClock.now
         var engine = EngineIdleMonitor()
-        var skippedSensors: Set<SupplementarySensor> = []
         var pendingSupportPages = OBDSupportPage.allCases[...]
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
@@ -451,7 +452,7 @@ enum MeasurementPhase {
                 try await link.connect()
                 guard !Task.isCancelled, id == runID else { return }
                 adapterStage = "Проверка ELM327 и ЭБУ"
-                try await client.initialize()
+                try await client.initialize(voltageSource: supplementaryRecovery.initialVoltageSource)
                 while !Task.isCancelled && id == runID {
                     if source == .vehicle, startedAt.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumSessionTime) {
                         pauseSession("Длительный сеанс завершён")
@@ -491,7 +492,8 @@ enum MeasurementPhase {
                     startAutomaticActivityIfPossible()
                     presentation.publish(coolant: reading, source: source, level: level)
                     refreshActivityState()
-                    let snapshot = try await client.readSupplementary(source: source, coolant: reading, skipping: skippedSensors)
+                    let snapshot = try await client.readSupplementary(source: source, coolant: reading,
+                                                                       skipping: supplementaryRecovery.skippedSensors)
                     guard !Task.isCancelled, id == runID else { return }
                     supplementary = snapshot
                     retryBudget.didCompleteCycle()
@@ -534,7 +536,7 @@ enum MeasurementPhase {
                 warmup.interrupt()
                 engine.interrupt()
                 if let timeout = error as? SupplementaryTimeout {
-                    skippedSensors.insert(timeout.sensor)
+                    supplementaryRecovery.record(timeout)
                 }
                 #if DEBUG
                 let shouldRetry = source == .simulator ? simulatedBreak : autoConnect && pendingAdapterID == nil && targetID != nil

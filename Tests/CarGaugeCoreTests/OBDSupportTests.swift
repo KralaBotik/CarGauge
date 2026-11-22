@@ -51,13 +51,23 @@ import Testing
 @Test func rejectedProbeIsAdvisoryButTimeoutIsNotSwallowed() async throws {
     let transport = CapabilityFixture()
     let client = ELM327Client(transport: transport)
-    for invalid in ["NO DATA", "?", "CAN ERROR", "410000000000\r410000000001"] {
+    for invalid in ["NO DATA", "?", "41000000000Z", "410000000000\r410000000001"] {
         transport.maskReply = .success(invalid)
         let result = try await client.probeSupport(.pids01To20)
         #expect(result == nil)
     }
     transport.maskReply = .failure(.timeout)
     await #expect(throws: OBDError.timeout) { try await client.probeSupport(.pids01To20) }
+}
+
+@MainActor
+@Test func probePropagatesExplicitAdapterAndBusFaults() async {
+    let transport = CapabilityFixture()
+    let client = ELM327Client(transport: transport)
+    for (reply, fault) in [("LV RESET", "LVRESET"), ("BUFFER FULL", "BUFFERFULL"), ("CAN ERROR", "CANERROR")] {
+        transport.maskReply = .success(reply)
+        await #expect(throws: OBDError.adapter(fault)) { try await client.probeSupport(.pids01To20) }
+    }
 }
 
 @MainActor
