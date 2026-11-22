@@ -16,7 +16,7 @@ private struct CoolantEntry: TimelineEntry {
     let containerIsAvailable: Bool
 
     var current: WidgetSnapshot? {
-        snapshot.flatMap { date < $0.expiration && date >= $0.sampleDate.addingTimeInterval(-1) ? $0 : nil }
+        snapshot.flatMap { $0.isCurrent(at: date) ? $0 : nil }
     }
 }
 
@@ -26,92 +26,83 @@ private struct CoolantProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CoolantEntry) -> Void) {
-        let containerIsAvailable = WidgetSnapshotStore.containerIsAvailable
-        completion(CoolantEntry(date: .now, snapshot: containerIsAvailable ? WidgetSnapshotStore.read() : nil, containerIsAvailable: containerIsAvailable))
+        let available = WidgetSnapshotStore.containerIsAvailable
+        completion(CoolantEntry(date: .now, snapshot: available ? WidgetSnapshotStore.read() : nil,
+                                containerIsAvailable: available))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<CoolantEntry>) -> Void) {
         let now = Date()
-        let containerIsAvailable = WidgetSnapshotStore.containerIsAvailable
-        let snapshot = containerIsAvailable ? WidgetSnapshotStore.read() : nil
-        var entries = [CoolantEntry(date: now, snapshot: snapshot, containerIsAvailable: containerIsAvailable)]
-        if let snapshot, snapshot.expiration > now {
-            entries.append(CoolantEntry(date: snapshot.expiration, snapshot: snapshot, containerIsAvailable: containerIsAvailable))
+        let available = WidgetSnapshotStore.containerIsAvailable
+        let snapshot = available ? WidgetSnapshotStore.read() : nil
+        let entry = CoolantEntry(date: now, snapshot: snapshot, containerIsAvailable: available)
+        var entries = [entry]
+        if let current = entry.current {
+            entries.append(CoolantEntry(date: current.expiration, snapshot: nil, containerIsAvailable: available))
         }
-        completion(Timeline(entries: entries, policy: .after(now.addingTimeInterval(entries[0].current == nil ? 15 * 60 : 60))))
+        let nextRequest = now.addingTimeInterval(entry.current == nil ? 15 * 60 : 60)
+        completion(Timeline(entries: entries, policy: .after(nextRequest)))
     }
 }
 
 private struct CoolantWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "CoolantSnapshot", provider: CoolantProvider()) { entry in
-            VStack(alignment: .leading, spacing: 4) {
-                Label("ОЖ", systemImage: "thermometer.medium")
-                    .font(.headline)
-                if !entry.containerIsAvailable {
-                    Text("Нет доступа к App Group")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else if let snapshot = entry.current {
-                    Text("\(snapshot.temperature) °C")
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .monospacedDigit()
-                        .minimumScaleFactor(0.55)
-                        .lineLimit(1)
-                        .foregroundStyle(temperatureColor(snapshot.level))
-                    if snapshot.level != .normal {
-                        Text(snapshot.level == .critical ? "Перегрев" : "Высокая температура")
-                            .font(.caption2.bold())
-                            .foregroundStyle(temperatureColor(snapshot.level))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                    if snapshot.source == .simulator { Text("Симулятор").font(.caption2) }
-                    Text("Последний замер: \(Text(snapshot.sampleDate, style: .relative)) назад")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                } else {
-                    Text("Нет свежих данных")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .containerBackground(.fill.tertiary, for: .widget)
+            CoolantWidgetFace(entry: entry)
         }
         .configurationDisplayName("Температура ОЖ")
-        .description("Последний замер CarGauge с отметкой времени.")
-        .supportedFamilies([.systemSmall])
+        .description("Снимок температуры с временем замера.")
+        .supportedFamilies([.systemSmall, .accessoryRectangular])
         .containerBackgroundRemovable(true)
+    }
+}
+
+private struct CoolantWidgetFace: View {
+    @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.widgetRenderingMode) private var renderingMode
+    @Environment(\.showsWidgetContainerBackground) private var showsBackground
+    let entry: CoolantEntry
+
+    var body: some View {
+        GlanceWidgetInstrument(sample: entry.current, containerIsAvailable: entry.containerIsAvailable,
+                               isAccessory: family == .accessoryRectangular,
+                               useAppColors: renderingMode == .fullColor && showsBackground)
+            .containerBackground(for: .widget) {
+                InstrumentPalette(scheme: scheme).surface
+            }
     }
 }
 
 private struct CoolantLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: CarGaugeAttributes.self) { context in
-            ActivityTemperature(context: context)
+            LiveInstrument(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.bottom) {
-                    ActivityTemperature(context: context)
+                    LiveInstrument(context: context, isIsland: true)
                 }
             } compactLeading: {
                 if context.attributes.source == .simulator {
-                    Text("Демо").font(.caption2).accessibilityLabel("Симулятор")
+                    Text("Тест").font(.caption2).accessibilityLabel("Тестовые данные")
                 } else {
-                    Image(systemName: "thermometer.medium").accessibilityLabel("Температура ОЖ")
+                    Image(systemName: context.isStale ? "clock" : context.state.level.glanceSymbol)
+                        .accessibilityLabel(context.isStale ? "Нет свежих данных" : context.state.level.glanceTitle ?? "Температура ОЖ")
                 }
             } compactTrailing: {
                 Text(context.isStale ? "—" : "\(context.state.coolant)°")
                     .monospacedDigit()
-                    .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
+                    .accessibilityLabel(context.isStale ? "Нет свежих данных" : "\(context.state.coolant) °C")
             } minimal: {
                 if context.attributes.source == .simulator {
-                    Image(systemName: "testtube.2").accessibilityLabel("Симулятор")
+                    Image(systemName: "testtube.2").accessibilityLabel("Тестовые данные")
+                } else if context.isStale {
+                    Image(systemName: "clock").accessibilityLabel("Нет свежих данных")
                 } else {
-                    Text(context.isStale ? "—" : "\(context.state.coolant)°").monospacedDigit()
+                    Text("\(context.state.coolant)°")
+                        .monospacedDigit()
+                        .accessibilityLabel("\(context.state.coolant) °C")
                 }
             }
         }
@@ -119,48 +110,23 @@ private struct CoolantLiveActivity: Widget {
     }
 }
 
-private struct ActivityTemperature: View {
+private struct LiveInstrument: View {
     @Environment(\.activityFamily) private var family
+    @Environment(\.colorScheme) private var scheme
     let context: ActivityViewContext<CarGaugeAttributes>
+    var isIsland = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: context.isStale ? "thermometer.medium" : (context.state.level == .normal ? "thermometer.medium" : "exclamationmark.triangle.fill"))
-                .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(context.attributes.source == .simulator ? "ОЖ · Симулятор" : "Температура ОЖ")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(context.isStale ? "Нет свежих данных" : "\(context.state.coolant) °C")
-                    .font(context.isStale ? .caption.bold() : .title2.bold())
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                    .foregroundStyle(context.isStale ? Color.secondary : temperatureColor(context.state.level))
-                if !context.isStale && context.state.level != .normal {
-                    Text(context.state.level == .critical ? "Перегрев" : "Высокая температура")
-                        .font(.caption2.bold())
-                        .foregroundStyle(temperatureColor(context.state.level))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-                if !context.isStale {
-                    Text("Замер в \(context.state.sampleDate, style: .time)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 0)
+        let palette = InstrumentPalette(scheme: scheme)
+        let instrument = GlanceActivityInstrument(state: context.state, source: context.attributes.source,
+                                                  isStale: context.isStale, isSmall: family == .small,
+                                                  isIsland: isIsland)
+        if isIsland {
+            instrument
+        } else {
+            instrument
+                .activityBackgroundTint(family == .small ? nil : palette.surface)
+                .activitySystemActionForegroundColor(family == .small ? nil : palette.reading)
         }
-        .padding(family == .small ? 8 : 16)
-    }
-}
-
-private func temperatureColor(_ level: ThermalLevel) -> Color {
-    switch level {
-    case .normal: .primary
-    case .warning: .orange
-    case .critical: .red
     }
 }
