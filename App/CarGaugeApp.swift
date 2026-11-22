@@ -7,13 +7,30 @@ import SwiftUI
 
     var body: some Scene {
         WindowGroup {
-            CarGaugeShell(model: model, appearance: $appearance, isActive: scenePhase == .active)
+            rootView
                 .preferredColorScheme(appearance.scheme)
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     model.sceneChanged(active: phase == .active, background: phase == .background)
                 }
         }
     }
+
+    @ViewBuilder private var rootView: some View {
+        #if DEBUG && !CARGAUGE_BASIC
+        if ProcessInfo.processInfo.arguments.contains("--glance-preview-fixture") {
+            GlancePreviewFixture()
+        } else {
+            carGauge
+        }
+        #else
+        carGauge
+        #endif
+    }
+
+    private var carGauge: some View {
+        CarGaugeShell(model: model, appearance: $appearance, isActive: scenePhase == .active)
+    }
+
 }
 
 private enum GaugeDestination: Hashable {
@@ -26,6 +43,7 @@ struct CarGaugeShell: View {
     @Binding var appearance: GaugeAppearance
     let isActive: Bool
     var previewDate: Date?
+    @StateObject private var navigation = InstrumentNavigation.shared
     @State private var path: [GaugeDestination] = []
     @State private var showsAdapterSetup = false
 
@@ -62,6 +80,10 @@ struct CarGaugeShell: View {
         }
         .sheet(isPresented: $showsAdapterSetup) {
             GaugeAdapterSetupView(model: model)
+        }
+        .onChange(of: navigation.revision) { _, _ in
+            path = []
+            showsAdapterSetup = false
         }
         .tint(palette.accent)
         .environment(\.gaugePalette, palette)
