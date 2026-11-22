@@ -428,10 +428,11 @@ enum MeasurementPhase {
                     let receivedAt = Date()
                     guard reading.isFresh(at: receivedAt) else { throw OBDError.noData }
                     let selectedNewAdapter = pendingAdapterID != nil
-                    if let targetID, source == .vehicle, adapterPreferences.verifiedID != targetID {
+                    let changedAdapter = adapterPreferences.verifiedID != targetID
+                    if let targetID, source == .vehicle, changedAdapter || selectedNewAdapter {
                         guard adapterPreferences.confirm(id: targetID, name: pendingAdapterName ?? ble.selectedName,
                                                          coolant: reading, at: receivedAt) else { throw OBDError.noData }
-                        if selectedNewAdapter {
+                        if selectedNewAdapter && changedAdapter {
                             resetHistory()
                             monitor = OverheatMonitor()
                             monitor.apply(thresholds)

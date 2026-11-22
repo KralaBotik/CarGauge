@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UIKit
 
@@ -35,7 +36,10 @@ private struct AdapterList: View {
     @State private var expanded = false
     #if DEBUG
     private static let fixtureDevices = [
-        BLEDevice(id: UUID(), name: "Vgate iCar Pro BLE", rssi: -48),
+        BLEDevice(id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7A, 0x12, 0xA4, 0x81, 0xB0, 0x01)),
+                  name: "Vgate iCar Pro BLE", rssi: -48),
+        BLEDevice(id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7A, 0x12, 0xA4, 0x81, 0xB0, 0x02)),
+                  name: "Vgate iCar Pro BLE", rssi: -56),
         BLEDevice(id: UUID(), name: "Устройство рядом", rssi: -60),
         BLEDevice(id: UUID(), name: "", rssi: -66),
     ]
@@ -60,8 +64,7 @@ private struct AdapterList: View {
     var body: some View {
         let nearby = devices
         GaugePage {
-            Text("Выберите свой адаптер. CarGauge проверит связь с блоком управления и сохранит адаптер после первого замера.")
-                .font(.subheadline).foregroundStyle(palette.muted)
+            GaugeHeading(title: "Адаптеры рядом", subtitle: "Выберите свой адаптер. Сохраним его после первого замера.")
             if model.isCheckingSelection {
                 GaugePanel {
                     ProgressView("Проверяем адаптер и ЭБУ…")
@@ -73,7 +76,7 @@ private struct AdapterList: View {
                 deviceGroup("Другие устройства", devices: nearby.filter { !$0.matchesVgateName }, id: "other-devices")
                 if scanState == .finished || scanState == .idle {
                     Button("Обновить список") { model.discoverAdapters(extended: expanded) }
-                        .buttonStyle(GaugeActionStyle())
+                        .buttonStyle(GaugeActionStyle(emphasized: nearby.isEmpty))
                         .accessibilityIdentifier("rescan-adapters")
                 }
                 if !expanded && (scanState == .finished || scanState == .scanning || scanState == .idle) {
@@ -120,21 +123,57 @@ private struct AdapterList: View {
 
     @ViewBuilder private func deviceGroup(_ title: String, devices: [BLEDevice], id: String) -> some View {
         if !devices.isEmpty {
-            GaugePanel {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                    Text(title).font(.headline).accessibilityAddTraits(.isHeader)
-                        .accessibilityIdentifier(id)
+            VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(palette.muted)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(id)
+                VStack(spacing: 0) {
                     ForEach(devices) { device in
-                        Button { model.selectDevice(device.id) } label: {
-                            Label(device.hasName ? device.name : "Устройство без имени",
-                                  systemImage: "dot.radiowaves.left.and.right")
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        adapterRow(device, among: devices)
+                        if device.id != devices.last?.id {
+                            Divider().overlay(palette.line).padding(.horizontal, GaugeSpacing.large)
                         }
-                        .buttonStyle(GaugeActionStyle())
-                        .disabled(model.isCheckingSelection)
                     }
                 }
+                .background(palette.panel, in: RoundedRectangle(cornerRadius: GaugeSpacing.corner))
             }
         }
+    }
+
+    private func adapterRow(_ device: BLEDevice, among peers: [BLEDevice]) -> some View {
+        let title = device.hasName ? device.name : "Устройство без имени"
+        let repeated = peers.contains {
+            $0.id != device.id && $0.name.caseInsensitiveCompare(device.name) == .orderedSame
+        }
+        let identifier = !device.hasName || repeated ? "ID · \(device.id.uuidString.suffix(8))" : nil
+
+        return Button { model.selectDevice(device.id) } label: {
+            HStack(spacing: GaugeSpacing.medium) {
+                Image(systemName: device.matchesVgateName ? "car.side" : "dot.radiowaves.left.and.right")
+                    .imageScale(.medium)
+                    .foregroundStyle(device.matchesVgateName ? palette.accent : palette.muted)
+                    .frame(width: 32)
+                VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
+                    Text(title).font(.body.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let identifier {
+                        Text(identifier).font(.caption.monospaced()).foregroundStyle(palette.muted)
+                    }
+                }
+                Spacer(minLength: GaugeSpacing.xsmall)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(palette.muted)
+            }
+            .padding(.horizontal, GaugeSpacing.medium)
+            .padding(.vertical, GaugeSpacing.medium)
+            .frame(minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(palette.text)
+        .accessibilityLabel(title)
+        .accessibilityValue(identifier ?? "")
+        .accessibilityIdentifier("adapter-\(device.id.uuidString)")
     }
 }

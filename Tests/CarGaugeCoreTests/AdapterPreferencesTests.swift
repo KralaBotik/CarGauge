@@ -49,3 +49,24 @@ import Testing
     #expect(defaults.object(forKey: "autoConnect") != nil && !defaults.bool(forKey: "autoConnect"))
     #expect(defaults.data(forKey: "thermalThresholds") == thresholds)
 }
+
+@Test func verifiedNameChangesOnlyForTheConfirmedDevice() throws {
+    let suite = "CarGauge.AdapterPreferencesTests." + UUID().uuidString
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let prefs = AdapterPreferences(defaults: defaults)
+    let first = UUID()
+    let second = UUID()
+    let now = Date(timeIntervalSince1970: 100)
+    let reading = Reading(85, at: now)
+
+    #expect(prefs.confirm(id: first, name: " iCar  BLE ", coolant: reading, at: now))
+    #expect(prefs.name == "iCar BLE")
+    #expect(prefs.confirm(id: first, name: " ", coolant: reading, at: now))
+    #expect(prefs.name == "iCar BLE")
+    #expect(prefs.confirm(id: first, name: "iCar Pro", coolant: reading, at: now))
+    #expect(prefs.name == "iCar Pro")
+    #expect(prefs.confirm(id: second, name: nil, coolant: reading, at: now))
+    #expect(prefs.name == nil && prefs.verifiedID == second)
+}

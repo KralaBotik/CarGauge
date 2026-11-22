@@ -33,34 +33,30 @@ struct CarGaugeShell: View {
         let palette = GaugePalette(scheme: colorScheme)
         NavigationStack(path: $path) {
             DashboardView(model: model, previewDate: previewDate,
-                          showHistory: { path.append(.history) }, showAdapter: { showsAdapterSetup = true })
+                          showHistory: { path.append(.history) },
+                          showSettings: { path.append(.settings) },
+                          showAdapter: { showsAdapterSetup = true })
                 .navigationTitle("CarGauge")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button { path.append(.history) } label: {
-                            Label("Поездка", systemImage: "chart.xyaxis.line").labelStyle(.iconOnly)
-                        }
-                        .accessibilityIdentifier("history-nav")
-                        Button { path.append(.settings) } label: {
-                            Label("Настройки", systemImage: "gearshape").labelStyle(.iconOnly)
-                        }
-                        .accessibilityIdentifier("settings-nav")
-                    }
-                }
+                .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: GaugeDestination.self) { destination in
                     switch destination {
                     case .history:
                         GaugeHistoryView(model: model)
                             .navigationTitle("Поездка")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar(.visible, for: .navigationBar)
                     case .settings:
                         GaugeSettingsView(model: model, appearance: $appearance, isActive: isActive,
                                           showAdapter: { showsAdapterSetup = true },
                                           showDiagnostics: { path.append(.diagnostics) })
                             .navigationTitle("Настройки")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar(.visible, for: .navigationBar)
                     case .diagnostics:
                         GaugeDiagnosticsView(model: model, ble: model.ble)
                             .navigationTitle("Диагностика")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar(.visible, for: .navigationBar)
                     }
                 }
         }

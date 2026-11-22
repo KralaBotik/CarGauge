@@ -7,10 +7,12 @@ struct DashboardView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     var previewDate: Date? = nil
     let showHistory: () -> Void
+    let showSettings: () -> Void
     let showAdapter: () -> Void
 
     var body: some View {
         GaugePage {
+            dashboardHeader
             connectionStatus
 
             if !model.hasConfiguredAdapter && !model.canRetryConnection && !model.isRunning && !isSimulation {
@@ -26,7 +28,7 @@ struct DashboardView: View {
                             waitingState
                         } else {
                             TemperatureInstrument(value: coolant, thresholds: model.thresholds,
-                                                  alert: model.level, phase: model.phase, source: model.source)
+                                                  alert: model.level)
                             metricStrip(at: now)
                             if model.phase == .failed || model.phase == .stopped { retryButton }
                         }
@@ -47,6 +49,38 @@ struct DashboardView: View {
         #else
         return false
         #endif
+    }
+
+    private var dashboardHeader: some View {
+        let actions = HStack(spacing: GaugeSpacing.small) {
+            navigationButton("Поездка", symbol: "chart.xyaxis.line", id: "history-nav", action: showHistory)
+            navigationButton("Настройки", symbol: "gearshape", id: "settings-nav", action: showSettings)
+        }
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.small))
+            : AnyLayout(HStackLayout(alignment: .center))
+        return layout {
+            Text("CarGauge")
+                .font(.system(.largeTitle, design: .default, weight: .bold))
+                .tracking(-1)
+                .accessibilityAddTraits(.isHeader)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            actions
+        }
+    }
+
+    private func navigationButton(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.medium))
+                .frame(width: 44, height: 44)
+                .background(palette.raised, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(palette.text)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(id)
     }
 
     private var connectionStatus: some View {
@@ -73,17 +107,23 @@ struct DashboardView: View {
     }
 
     private var adapterOnboarding: some View {
-        GaugePanel(instrument: true) {
-            VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
+        GaugePanel(instrument: true, inset: GaugeSpacing.section) {
+            VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+                Image(systemName: "car.side")
+                    .font(.title2.weight(.medium))
+                    .foregroundStyle(palette.accent)
+                    .frame(width: 56, height: 56)
+                    .background(palette.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+                    .accessibilityHidden(true)
                 Text("Подключите OBD-II адаптер")
                     .font(.title2.bold())
                     .accessibilityAddTraits(.isHeader)
-                Text("Вставьте адаптер в диагностический разъём и включите зажигание. Затем выберите свой адаптер из списка.")
+                Text("Вставьте адаптер в разъём автомобиля и включите зажигание.")
                     .font(.body)
                     .foregroundStyle(palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(action: showAdapter) {
-                    Label("Найти адаптер", systemImage: "link")
+                    Label("Найти адаптер", systemImage: "dot.radiowaves.left.and.right")
                         .frame(maxWidth: .infinity, minHeight: 46)
                 }
                 .buttonStyle(GaugeActionStyle(emphasized: true))
@@ -137,16 +177,20 @@ struct DashboardView: View {
     private var chartPanel: some View {
         GaugePanel {
             VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("График прогрева")
-                        .font(.headline)
-                        .accessibilityAddTraits(.isHeader)
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Прогрев").font(.headline).accessibilityAddTraits(.isHeader)
+                        Text("Последние 5 минут").font(.caption).foregroundStyle(palette.muted)
+                    }
                     Spacer(minLength: GaugeSpacing.small)
                     Button(action: showHistory) {
-                        Image(systemName: "arrow.up.right")
+                        Image(systemName: "chevron.right")
                             .font(.subheadline.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
                     }
-                    .buttonStyle(GaugeActionStyle())
+                    .buttonStyle(.plain)
+                    .foregroundStyle(palette.accent)
                     .accessibilityLabel("Открыть историю")
                 }
                 .accessibilityIdentifier("chart-preview")
@@ -167,17 +211,11 @@ struct DashboardView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: GaugeSpacing.medium))
             : AnyLayout(HStackLayout(alignment: .top, spacing: GaugeSpacing.large))
 
-        return GaugePanel {
-            layout {
-                GaugeMetric(title: "ОБОРОТЫ", symbol: "gauge.with.dots.needle.33percent",
-                            value: rpmLabel, detail: "об/мин", id: "rpm-value")
-                Rectangle().fill(palette.line)
-                    .frame(width: typeSize.isAccessibilitySize ? nil : 1,
-                           height: typeSize.isAccessibilitySize ? 1 : 69)
-                    .accessibilityHidden(true)
-                GaugeMetric(title: "НАПРЯЖЕНИЕ", symbol: "bolt",
-                            value: voltageLabel, detail: voltageDetail, id: "voltage-value")
-            }
+        return layout {
+            GaugeMetric(title: "Обороты", symbol: "gauge.with.dots.needle.33percent",
+                        value: rpmLabel, detail: rpm == nil ? "Нет данных" : "об/мин", id: "rpm-value")
+            GaugeMetric(title: "Напряжение", symbol: "bolt",
+                        value: voltageLabel, detail: voltageDetail, id: "voltage-value")
         }
     }
 }
@@ -193,16 +231,21 @@ private struct GaugeMetric: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            GaugeCaption(title: title, symbol: symbol)
+            Label(title, systemImage: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.muted)
             Text(value)
                 .font(.system(size: numberSize, weight: .semibold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .accessibilityIdentifier(id)
+                .accessibilityLabel(value == "—" ? "Нет данных" : value)
                 .accessibilityHint("\(title), \(detail)")
             Text(detail).font(.caption).foregroundStyle(palette.muted)
         }
+        .padding(GaugeSpacing.large)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.panel, in: RoundedRectangle(cornerRadius: GaugeSpacing.corner))
     }
 }
