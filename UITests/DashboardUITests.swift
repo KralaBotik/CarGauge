@@ -77,6 +77,8 @@ final class DashboardUITests: XCTestCase {
         #else
         XCTAssertTrue(app.switches["auto-live-activity"].exists)
         #endif
+        XCTAssertTrue(diagnostics.isHittable)
+        XCTAssertLessThanOrEqual(diagnostics.frame.maxY, app.buttons["settings-nav"].frame.minY)
         diagnostics.tap()
         let pid = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "PID 0105")).firstMatch
         XCTAssertTrue(pid.waitForExistence(timeout: responseTimeout))

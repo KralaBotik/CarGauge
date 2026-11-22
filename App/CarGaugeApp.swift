@@ -67,21 +67,25 @@ struct CarGaugeShell: View {
 
     var body: some View {
         let palette = GaugePalette(scheme: colorScheme)
-        NavigationStack(path: $path) {
-            sectionView
-                .navigationDestination(for: GaugeDestination.self) { destination in
-                    switch destination {
-                    case .diagnostics:
-                        GaugeDiagnosticsView(model: model, ble: model.ble)
-                            .navigationTitle("Диагностика")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar(.visible, for: .navigationBar)
+        VStack(spacing: 0) {
+            NavigationStack(path: $path) {
+                sectionView
+                    .navigationDestination(for: GaugeDestination.self) { destination in
+                        switch destination {
+                        case .diagnostics:
+                            GaugeDiagnosticsView(model: model, ble: model.ble)
+                                .navigationTitle("Диагностика")
+                                .navigationBarTitleDisplayMode(.inline)
+                                .toolbar(.visible, for: .navigationBar)
+                        }
                     }
-                }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+
             GaugeNavigationBar(selection: section, select: selectSection)
         }
+        .background(palette.canvas, ignoresSafeAreaEdges: .all)
         .sheet(isPresented: $showsAdapterSetup) {
             GaugeAdapterSetupView(model: model)
         }

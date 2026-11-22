@@ -180,8 +180,10 @@ struct DashboardView: View {
             Button(action: showHistory) {
                 HStack(spacing: GaugeSpacing.medium) {
                     VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-                        Text("Температура в поездке").font(.headline)
-                        Text("Последние 5 минут").font(.caption).foregroundStyle(palette.muted)
+                        Text(typeSize.isAccessibilitySize ? "График" : "Температура в поездке")
+                            .font(.headline)
+                        Text(typeSize.isAccessibilitySize ? "До 5 минут" : "Последние 5 минут")
+                            .font(.caption).foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: GaugeSpacing.small)
                     Image(systemName: "chevron.right")
@@ -193,6 +195,7 @@ struct DashboardView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("График температуры в поездке")
             .accessibilityHint("Открывает историю замеров")
             .accessibilityIdentifier("chart-preview")
             WarmupChart(points: model.history, thresholds: model.thresholds, compact: true,
