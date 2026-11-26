@@ -23,8 +23,13 @@ on:
         type: boolean
         default: false
       master_id:
-        description: "Master device build request ID"
+        description: "Master build request ID"
         type: string
+      master_mode:
+        description: "Device IPA or hosted XCTest and UI checks"
+        type: choice
+        options: [device, ui]
+        default: device
       master_sha:
         description: "Exact CarGauge source commit"
         type: string
@@ -47,14 +52,20 @@ concurrency:
 
 jobs:
   core:
-    if: ${{ !inputs.master_id }}
+    if: ${{ !inputs.master_id || inputs.master_mode == 'ui' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: swift:6.2.3-noble
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.master_id && inputs.master_sha || github.sha }}
           persist-credentials: false
+      - name: Verify requested source revision
+        if: ${{ inputs.master_id }}
+        env:
+          SOURCE_SHA: ${{ inputs.master_sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Test Swift core
         shell: bash
         run: |
@@ -76,7 +87,7 @@ jobs:
 
   master-device:
     name: Master device (${{ matrix.flavor }})
-    if: ${{ inputs.master_id != '' }}
+    if: ${{ inputs.master_id && inputs.master_mode == 'device' }}
     runs-on: macos-26
     timeout-minutes: 14
     strategy:
@@ -164,8 +175,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.master_id && inputs.master_sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+      - name: Verify requested source revision
+        if: ${{ inputs.master_id }}
+        env:
+          SOURCE_SHA: ${{ inputs.master_sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then
