@@ -2,6 +2,7 @@
 set -euo pipefail
 
 simulator="$1"
+destination="platform=iOS Simulator,arch=$(uname -m),id=$simulator"
 output="$2"
 derived="$3"
 old="$output/Legacy"
@@ -12,7 +13,7 @@ mkdir -p "$old"
 git archive "$base" | tar -xf - -C "$old"
 (cd "$old" && xcodegen generate --spec project.yml)
 xcodebuild -project "$old/CarGauge.xcodeproj" -scheme CarGauge -configuration Release \
-  -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+  -destination "$destination" \
   -derivedDataPath "$old/DerivedData" ONLY_ACTIVE_ARCH=YES build
 
 # Reuse only the disposable simulator created by CI. Install the old product first.
@@ -63,7 +64,7 @@ assert json.loads(p["verifiedOBDAdapter"])["name"] == "Vgate iCar Pro BLE (CI)"
 print("VERIFIED: Full 0.5.0 -> 0.6.0 update preserved preferences and verified adapter")
 PY
 xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
-  -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+  -destination "$destination" \
   -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
   -resultBundlePath "$output/CarGauge-ReleaseUpgrade.xcresult" \
   -only-testing:CarGaugeUITests/DashboardUITests/testReleaseUpgradeRetainsPreferences test

@@ -9,12 +9,23 @@ on:
         description: "Installed iOS runtime (e.g. iOS-26-5). Empty selects an available iPhone."
         required: false
         type: string
+      macos_runner:
+        description: "Standard hosted macOS runner"
+        type: choice
+        default: macos-26
+        options:
+          - macos-26
+          - macos-26-intel
+      device_only:
+        description: "Compile unsigned iPhone Release only (skip XCTest and IPA)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: cargauge-ci-${{ github.workflow }}-${{ github.ref }}
+  group: cargauge-ci-${{ github.workflow }}-${{ github.ref }}${{ (inputs.device_only || inputs.macos_runner == 'macos-26-intel') && '-lab' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -48,7 +59,7 @@ jobs:
   ios:
     name: iOS (${{ matrix.flavor }})
     needs: core
-    runs-on: macos-26
+    runs-on: ${{ inputs.macos_runner == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -69,7 +80,11 @@ jobs:
           fi
           xcodegen --version
       - name: Test on an iPhone simulator and build for iPhone
+        if: ${{ !inputs.device_only }}
         run: scripts/ci-ios.sh ${{ matrix.flavor }}
+      - name: Compile unsigned for iPhone (no XCTest or IPA)
+        if: ${{ inputs.device_only }}
+        run: scripts/ci-ios.sh ${{ matrix.flavor }} --device-only
       - name: Upload iOS diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -85,7 +100,7 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
       - name: Upload named usability screenshots
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !inputs.device_only }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: CarGauge-iPhone11-${{ matrix.flavor }}-screenshots
@@ -94,7 +109,7 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
       - name: Stage the validated IPA for release
-        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
+        if: ${{ success() && !inputs.device_only && inputs.macos_runner != 'macos-26-intel' && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: CarGauge-${{ matrix.flavor }}-candidate
@@ -109,7 +124,7 @@ jobs:
   publish-ipa:
     name: Publish Basic and Full IPA
     needs: ios
-    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
+    if: ${{ success() && !inputs.device_only && inputs.macos_runner != 'macos-26-intel' && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

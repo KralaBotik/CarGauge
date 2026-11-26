@@ -7,11 +7,23 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
-flavor="${1:-full}"
+flavor=full
+if [[ "${1:-}" == full || "${1:-}" == basic ]]; then
+  flavor="$1"
+  shift
+fi
+device_only=false
+if [[ "${1:-}" == --device-only ]]; then
+  device_only=true
+  shift
+fi
+if [[ "$#" -ne 0 ]]; then
+  echo "Usage: scripts/ci-ios.sh [full|basic] [--device-only]" >&2
+  exit 2
+fi
 case "$flavor" in
   full) scheme=CarGauge; test_target=CarGaugeUITests; ipa=CarGauge-Full-unsigned.ipa ;;
   basic) scheme=CarGaugeBasic; test_target=CarGaugeBasicUITests; ipa=CarGauge-Basic-unsigned.ipa ;;
-  *) echo "Usage: scripts/ci-ios.sh [full|basic]" >&2; exit 2 ;;
 esac
 
 mkdir -p .artifacts
@@ -25,8 +37,14 @@ derived="$output/DerivedData"
 } 2>&1 | tee "$output/CarGauge-Setup.log"
 
 status=0
-devices="$(xcrun simctl list devices available --json)"
-if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"; then
+simulator=""
+if [[ "$device_only" == false ]]; then
+  devices="$(xcrun simctl list devices available --json)"
+  simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)" || status=1
+else
+  echo "Device-only mode: simulator tests and IPA packaging are disabled."
+fi
+if [[ -n "$simulator" ]]; then
   runtime="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py --runtime-id)"
   if compact="$(xcrun simctl create 'CarGauge iPhone 11' com.apple.CoreSimulator.SimDeviceType.iPhone-11 "$runtime")"; then
     simulator="$compact"
@@ -34,11 +52,12 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
   else
     echo "iPhone 11 unavailable on $runtime; using the installed iPhone simulator"
   fi
+  destination="platform=iOS Simulator,arch=$(uname -m),id=$simulator"
   xcrun simctl bootstatus "$simulator" -b
   run_debug_ui() {
     local result="$1" log="$2"
     xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" \
-      -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+      -destination "$destination" \
       -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
       -resultBundlePath "$output/$result.xcresult" test 2>&1 | tee "$output/$log"
   }
@@ -52,7 +71,7 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
   fi
   if [[ "$status" -eq 0 ]]; then
     if ! xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
-      -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
+      -destination "$destination" \
       -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
       -resultBundlePath "$output/CarGauge-ReleaseUI.xcresult" \
       "-only-testing:$test_target/DashboardUITests/testReleaseIgnoresTestLaunchFlags" test \
@@ -73,8 +92,6 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
       python3 scripts/name_screenshots.py "$attachments" "$output/gallery"
     fi
   done
-else
-  status=1
 fi
 
 if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Release \
@@ -88,8 +105,12 @@ if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Relea
       echo "Release build is missing the Open Instruments shortcut metadata." | tee -a "$output/CarGauge-Device.log"
       exit 1
     fi
-    python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
-      2>&1 | tee -a "$output/CarGauge-Device.log"
+    if [[ "$device_only" == false ]]; then
+      python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
+        2>&1 | tee -a "$output/CarGauge-Device.log"
+    else
+      echo "Unsigned device build completed. XCTest and IPA are unverified." | tee -a "$output/CarGauge-Device.log"
+    fi
   fi
 else
   status=1
