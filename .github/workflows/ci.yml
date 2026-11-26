@@ -1,7 +1,9 @@
 name: CarGauge CI
+run-name: ${{ inputs.master_id && format('Master {0}', inputs.master_id) || github.event.head_commit.message || github.ref_name }}
 
 on:
   push:
+    branches-ignore: [ci/macos-runner-audit]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -20,16 +22,32 @@ on:
         description: "Compile unsigned iPhone Release only (skip XCTest and IPA)"
         type: boolean
         default: false
+      master_id:
+        description: "Master device build request ID"
+        type: string
+      master_sha:
+        description: "Exact CarGauge source commit"
+        type: string
+      master_flavor:
+        description: "Device build flavor"
+        type: choice
+        options: [both, basic, full]
+        default: both
+      master_repeat:
+        description: "Run a second build in the same checkout and DerivedData"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: cargauge-ci-${{ github.workflow }}-${{ github.ref }}${{ (inputs.device_only || inputs.macos_runner == 'macos-26-intel') && '-lab' || '' }}
+  group: cargauge-ci-${{ github.workflow }}-${{ inputs.master_id || github.ref }}${{ (inputs.device_only || inputs.macos_runner == 'macos-26-intel') && '-lab' || '' }}
   cancel-in-progress: true
 
 jobs:
   core:
+    if: ${{ !inputs.master_id }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     container: swift:6.2.3-noble
@@ -55,6 +73,81 @@ jobs:
           path: .artifacts/core/CarGauge-Core.log
           include-hidden-files: true
           retention-days: 14
+
+  master-device:
+    name: Master device (${{ matrix.flavor }})
+    if: ${{ inputs.master_id != '' }}
+    runs-on: macos-26
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: ${{ fromJSON(inputs.master_flavor == 'basic' && '["basic"]' || inputs.master_flavor == 'full' && '["full"]' || '["basic", "full"]') }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      REQUEST_ID: ${{ inputs.master_id }}
+      SOURCE_SHA: ${{ inputs.master_sha }}
+      BUILD_FLAVOR: ${{ matrix.flavor }}
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{32}$ && "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - name: Check out build tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check out CarGauge source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: source
+          ref: ${{ inputs.master_sha }}
+          persist-credentials: false
+      - name: Install pinned XcodeGen
+        shell: bash
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+          tool_dir="$RUNNER_TEMP/master-xcodegen"
+          mkdir "$tool_dir"
+          curl -fsSL --connect-timeout 6 --max-time 90 -o "$tool_dir/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.44.1/xcodegen.zip
+          cd "$tool_dir"
+          printf '%s\n' 'a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  xcodegen.zip' | shasum -a 256 -c -
+          unzip -q xcodegen.zip
+          echo "$tool_dir/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Build cold
+        run: python3 -B scripts/master-device.py source "$BUILD_FLAVOR" cold
+      - name: Upload cold
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Master-CarGauge-${{ matrix.flavor }}-cold
+          path: source/.artifacts/master-device/${{ matrix.flavor }}/cold/export/
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+      - name: Build warm
+        if: ${{ inputs.master_repeat }}
+        run: python3 -B scripts/master-device.py source "$BUILD_FLAVOR" warm
+      - name: Upload warm
+        if: ${{ inputs.master_repeat }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Master-CarGauge-${{ matrix.flavor }}-warm
+          path: source/.artifacts/master-device/${{ matrix.flavor }}/warm/export/
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+      - name: Upload failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Master-CarGauge-${{ matrix.flavor }}-failed
+          path: source/.artifacts/master-device/${{ matrix.flavor }}/*/export/build.log
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
 
   ios:
     name: iOS (${{ matrix.flavor }})
