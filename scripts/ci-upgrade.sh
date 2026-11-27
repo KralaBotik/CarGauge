@@ -6,7 +6,7 @@ output="$2"
 derived="$3"
 old="$output/Legacy"
 bundle=com.cargauge.prototype
-base=7b1c9fe46121a3efc77ea8e3761c03c5c39e0dd0
+base=89991d31f67053d7467404ef2f7dcfd3b34ddeb7
 
 mkdir -p "$old"
 git archive "$base" | tar -xf - -C "$old"
@@ -52,7 +52,7 @@ import plistlib
 import sys
 from pathlib import Path
 
-for app, version in zip(sys.argv[1:3], ["0.5.0", "0.6.0"], strict=True):
+for app, version in zip(sys.argv[1:3], ["0.6.0", "0.7.0"], strict=True):
     info = plistlib.loads((Path(app) / "Info.plist").read_bytes())
     assert info["CFBundleShortVersionString"] == version and info["CFBundleIdentifier"] == sys.argv[4]
 p = plistlib.loads((Path(sys.argv[3]) / "Library" / "Preferences" / (sys.argv[4] + ".plist")).read_bytes())
@@ -60,7 +60,7 @@ assert p["appearance"] == "light" and p["autoConnect"] is False and p["autoLiveA
 assert json.loads(p["verifiedOBDAdapter"])["id"] == "00000000-0000-0000-0000-000000000001"
 assert json.loads(p["thermalThresholds"])["warning"] == 108
 assert json.loads(p["verifiedOBDAdapter"])["name"] == "Vgate iCar Pro BLE (CI)"
-print("VERIFIED: Full 0.5.0 -> 0.6.0 update preserved preferences and verified adapter")
+print("VERIFIED: Full 0.6.0 -> 0.7.0 update preserved preferences and verified adapter")
 PY
 xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
   -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
