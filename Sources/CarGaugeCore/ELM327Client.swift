@@ -37,7 +37,7 @@ public struct SupplementaryRecovery: Sendable {
 @MainActor public final class ELM327Client {
     public static let initializationCommands = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"]
     public static let allowedCommands = Set(initializationCommands + OBDPID.allCases.map(\.rawValue)
-                                            + OBDSupportPage.allCases.map(\.rawValue) + ["ATRV"])
+                                            + OBDSupportPage.allCases.map(\.rawValue) + ["ATRV"]).union(DiagnosticRequest.allowed)
 
     private let transport: any OBDTransport
     private var voltageSource: VoltageSource = .ecu
@@ -47,6 +47,7 @@ public struct SupplementaryRecovery: Sendable {
     private var voltageRetryAfter: Date?
     private var sequenceInProgress = false
     private var initialCoolant: Reading?
+    public private(set) var adapterIdentification: String?
 
     public init(transport: any OBDTransport) { self.transport = transport }
 
@@ -54,6 +55,7 @@ public struct SupplementaryRecovery: Sendable {
         try beginSequence()
         defer { sequenceInProgress = false }
         initialCoolant = nil
+        adapterIdentification = nil
         self.voltageSource = voltageSource
         rpmSupported = true
         voltageSupported = true
@@ -64,7 +66,10 @@ public struct SupplementaryRecovery: Sendable {
             let response = try await transport.exchange(command, timeout: 5)
             let lines = try OBDDecoder.lines(response, echo: command)
             if command == "ATZ" {
-                guard lines.contains(where: { $0.contains("ELM327") }) else { throw OBDError.malformedResponse }
+                guard let banner = lines.first(where: { $0.contains("ELM327") }) else {
+                    throw OBDError.malformedResponse
+                }
+                adapterIdentification = String(banner.prefix(128))
             } else {
                 guard lines == ["OK"] else { throw OBDError.malformedResponse }
             }
@@ -143,6 +148,12 @@ public struct SupplementaryRecovery: Sendable {
         }
         try Task.checkCancellation()
         return TelemetrySnapshot(source: source, coolant: coolant, rpm: rpm, voltage: voltage, voltageSource: voltageSource)
+    }
+
+    func exchangeDiagnostic(_ request: DiagnosticRequest) async throws -> String {
+        try beginSequence()
+        defer { sequenceInProgress = false }
+        return try await transport.exchange(request.wire, timeout: 2)
     }
 
     private func exchangeOptional(_ command: String, timeoutFailure: SupplementaryTimeout) async throws -> String {

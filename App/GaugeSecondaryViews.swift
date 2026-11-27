@@ -65,6 +65,7 @@ struct GaugeDiagnosticsView: View {
                 diagnosticField("Маски поддержки PID", model.pidSupportSummary)
                     .accessibilityIdentifier("pid-support-summary")
             }
+            GaugeDiagnosticSurveyView(model: model)
             #if !CARGAUGE_BASIC
             GaugeSection(title: "Общий контейнер виджета") {
                 Text(model.widgetContainerAvailable

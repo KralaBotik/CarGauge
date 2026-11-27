@@ -42,6 +42,27 @@ enum MeasurementPhase {
     }
     var widgetContainerAvailable: Bool { presentation.groupIsAvailable }
     #endif
+    @Published private(set) var diagnosticReport: DiagnosticReport?
+    @Published private(set) var diagnosticStorageMessage: String?
+    private let diagnosticStore = DiagnosticLocalStore()
+    private var survey: DiagnosticSurvey?
+    private var firstObservedOnLink: Date?
+    private var adapterIdentification: String?
+    #if DEBUG
+    private var diagnosticFixture: Bool {
+        ProcessInfo.processInfo.arguments.contains("--diagnostic-survey-fixture")
+    }
+    #endif
+    var canSurvey: Bool {
+        guard phase == .streaming, sceneIsActive, survey == nil, !isAdapterSetupOpen else { return false }
+        #if DEBUG
+        if source == .simulator { return diagnosticFixture }
+        #endif
+        return source == .vehicle && hasConfiguredAdapter
+    }
+    var surveyIsRunning: Bool { diagnosticReport?.state == .running && survey != nil }
+    var surveyAllowsExport: Bool { survey == nil }
+
     @Published private(set) var adapterStage = "Ожидание"
     @Published private var supportResponses: [OBDSupportPage: String] = [:]
     var pidSupportSummary: String {
@@ -122,7 +143,7 @@ enum MeasurementPhase {
         let args = ProcessInfo.processInfo.arguments
         launchScenario = args.firstIndex(of: "--simulation-scenario").flatMap { index in
             args.indices.contains(index + 1) ? SimulationScenario(rawValue: args[index + 1]) : nil
-        }
+        } ?? (args.contains("--diagnostic-survey-fixture") ? .warmup : nil)
         discoveryFixture = args.contains("--adapter-list-fixture")
         waitingFixture = args.contains("--adapter-waiting-fixture")
         if launchScenario != nil { hasConfiguredAdapter = true }
@@ -131,6 +152,7 @@ enum MeasurementPhase {
             .flatMap { try? JSONDecoder().decode(ThermalThresholds.self, from: $0) }
         thresholds = saved ?? .standard
         monitor.apply(thresholds)
+        if source == .vehicle { diagnosticReport = diagnosticStore.latest() }
         observeRadioPower()
     }
 
@@ -143,6 +165,7 @@ enum MeasurementPhase {
         sceneIsActive = active
         presentation.isForeground = active
         ble.allowsUnfilteredScan = active
+        if !active { finishSurvey("Приложение перестало быть активным") }
         if background {
             discoveryBLE.cancelDiscovery()
             if source == .vehicle, isRunning, phase == .connecting || phase == .retrying {
@@ -184,6 +207,36 @@ enum MeasurementPhase {
             start(preservingHistory: true)
         } else {
             startAutomaticActivityIfPossible()
+        }
+    }
+
+    func startDiagnosticSurvey() {
+        guard canSurvey else { return }
+        let candidate = DiagnosticSurvey(firstObservedCoolantAt: firstObservedOnLink,
+                                         adapterName: configuredName ?? ble.connectedName,
+                                         adapterIdentification: adapterIdentification, source: source,
+                                         stationaryConfirmedByUser: true)
+        survey = candidate
+        publishSurvey(candidate)
+    }
+
+    func cancelDiagnosticSurvey() { finishSurvey("Остановлено пользователем") }
+
+    private func finishSurvey(_ reason: String) {
+        guard let survey else { return }
+        survey.interrupt(reason)
+        publishSurvey(survey)
+    }
+
+    private func publishSurvey(_ work: DiagnosticSurvey) {
+        guard survey === work || diagnosticReport?.id == work.report.id else { return }
+        if work.report.state != .running, !work.isExecuting, survey === work { survey = nil }
+        diagnosticReport = work.report
+        do {
+            try diagnosticStore.save(work.report)
+            diagnosticStorageMessage = nil
+        } catch {
+            diagnosticStorageMessage = "Локальная запись недоступна. Сохраните отчёт через экспорт."
         }
     }
 
@@ -319,6 +372,8 @@ enum MeasurementPhase {
     }
 
     private func stopSession(resetBLE: Bool = true) {
+        finishSurvey("Сеанс измерений завершён")
+        firstObservedOnLink = nil
         runID = UUID()
         session?.cancel()
         session = nil
@@ -453,6 +508,9 @@ enum MeasurementPhase {
                 guard !Task.isCancelled, id == runID else { return }
                 adapterStage = "Проверка ELM327 и ЭБУ"
                 try await client.initialize(voltageSource: supplementaryRecovery.initialVoltageSource)
+                guard !Task.isCancelled, id == runID else { return }
+                adapterIdentification = client.adapterIdentification
+                firstObservedOnLink = nil
                 while !Task.isCancelled && id == runID {
                     if source == .vehicle, startedAt.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumSessionTime) {
                         pauseSession("Длительный сеанс завершён")
@@ -466,6 +524,7 @@ enum MeasurementPhase {
                     guard !Task.isCancelled, id == runID else { return }
                     let receivedAt = Date()
                     guard reading.isFresh(at: receivedAt) else { throw OBDError.noData }
+                    if firstObservedOnLink == nil { firstObservedOnLink = receivedAt }
                     let selectedNewAdapter = pendingAdapterID != nil
                     if let targetID, source == .vehicle {
                         let changedAdapter = adapterPreferences.verifiedID != targetID
@@ -500,7 +559,10 @@ enum MeasurementPhase {
                     let engineSample: (rpm: Reading?, at: Date)
                     let pollDelay: Duration
                     #if DEBUG
-                    if launchScenario == .engineOff {
+                    if diagnosticFixture {
+                        engineSample = (snapshot.rpm, .now)
+                        pollDelay = .milliseconds(120)
+                    } else if launchScenario == .engineOff {
                         // XCTest can suspend the simulator between samples. Drive this fixture by sample count.
                         engineFixtureTime += 2
                         engineSample = (snapshot.rpm.map { Reading($0.value, at: engineFixtureTime) }, engineFixtureTime)
@@ -517,7 +579,11 @@ enum MeasurementPhase {
                         pauseSession("Обороты двигателя упали до нуля", engineStopped: true)
                         return
                     }
-                    if source == .vehicle, sceneIsActive, engineSample.rpm?.value != 0,
+                    if sceneIsActive, let survey {
+                        defer { publishSurvey(survey) }
+                        try await survey.performNext(with: client)
+                        guard !Task.isCancelled, id == runID else { return }
+                    } else if source == .vehicle, sceneIsActive, engineSample.rpm?.value != 0,
                        let page = pendingSupportPages.popFirst() {
                         // Probe one mask after useful direct measurements; never gate a PID on a mask bit.
                         supportResponses[page] = "нет надёжного ответа"
@@ -529,6 +595,8 @@ enum MeasurementPhase {
                 }
             } catch {
                 guard !Task.isCancelled, id == runID else { return }
+                finishSurvey(error.localizedDescription)
+                firstObservedOnLink = nil
                 link.disconnect()
                 transport = nil
                 coolant = nil

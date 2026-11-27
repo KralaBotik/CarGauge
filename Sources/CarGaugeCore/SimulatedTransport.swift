@@ -67,6 +67,15 @@ public enum SimulationScenario: String, CaseIterable, Sendable {
             let speed = scenario == .engineOff && sample > 3 ? 0 : max(800, 1400 - sample * 15)
             return String(format: "410C%04X\r>", speed * 4)
         case "0142": return scenario == .noVoltagePID ? "NO DATA\r>" : "41423778\r>"
+        case "ATDPN": return "A6\r>"
+        case "0101": return "410100076101\r>"
+        case "0120": return "412000000001\r>"
+        case "03": return "43010133\r>"
+        case "07": return "4700\r>"
+        case "0A": return "NO DATA\r>"
+        case "020200": return "4202000133\r>"
+        case "020000": return "42000008000000\r>"
+        case "020500": return "4205007C\r>"
         case "ATRV": return "14.1V\r>"
         default: return "?\r>"
         }

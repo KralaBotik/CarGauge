@@ -92,6 +92,34 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.buttons["instruments-nav"].isSelected)
     }
 
+    @MainActor func testReadOnlySurveyShowsCompletedFixtureAndExportFormats() {
+        let app = launch(options: ["--diagnostic-survey-fixture"])
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForExistence(timeout: responseTimeout))
+        app.buttons["settings-nav"].tap()
+        let diagnostics = app.buttons["diagnostics-nav"]
+        for _ in 0..<6 where !diagnostics.isHittable { app.swipeUp() }
+        XCTAssertTrue(diagnostics.isHittable)
+        diagnostics.tap()
+        let start = app.buttons["survey-start"]
+        for _ in 0..<4 where !start.isHittable { app.swipeUp() }
+        XCTAssertTrue(start.isHittable)
+        start.tap()
+        let confirm = app.buttons.matching(identifier: "survey-confirm").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: responseTimeout))
+        confirm.tap()
+        let status = app.staticTexts["survey-state"]
+        XCTAssertTrue(status.wait(for: \.label, toEqual: "Обследование завершено", timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["survey-test-source"].exists)
+        let export = app.buttons["survey-export"]
+        for _ in 0..<6 where !export.isHittable { app.swipeUp() }
+        XCTAssertTrue(export.isHittable)
+        export.tap()
+        for title in ["Отчёт JSON", "Измерения CSV", "Текстовая сводка"] {
+            let format = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            XCTAssertTrue(format.waitForExistence(timeout: responseTimeout), title)
+        }
+    }
+
     @MainActor func testThresholdCanBeAdjustedAndReset() {
         let app = launch()
         app.buttons["settings-nav"].tap()
@@ -256,7 +284,7 @@ final class DashboardUITests: XCTestCase {
     #else
     @MainActor func testReleaseIgnoresTestLaunchFlags() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+        app.launchArguments = ["--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
                                "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
@@ -268,7 +296,7 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testReleaseUpgradeRetainsPreferences() {
         let app = XCUIApplication()
-        app.launchArguments = ["--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+        app.launchArguments = ["--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
                                "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))
