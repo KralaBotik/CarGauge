@@ -108,11 +108,11 @@ private struct AdapterList: View {
                 }
             }
         }
+        .accessibilityIdentifier("adapter-setup")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             actions(emphasizesRescan: nearby.isEmpty)
         }
         .sensoryFeedback(.selection, trigger: showsOtherDevices)
-        .accessibilityIdentifier("adapter-setup")
     }
 
     private var canDiscover: Bool {

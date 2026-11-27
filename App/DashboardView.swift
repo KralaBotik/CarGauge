@@ -26,6 +26,7 @@ struct DashboardView: View {
                 if !model.history.isEmpty { chartSection }
             }
         }
+        .accessibilityIdentifier("instruments-screen")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if needsAdapter {
                 primaryAction("Найти адаптер", symbol: "arrow.right", id: "find-adapter", action: showAdapter)
@@ -36,7 +37,6 @@ struct DashboardView: View {
                     .background(palette.canvas)
             }
         }
-        .accessibilityIdentifier("instruments-screen")
     }
 
     private var isSimulation: Bool {
@@ -166,7 +166,8 @@ struct DashboardView: View {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                 }
             } else if model.canRetryConnection {
-                primaryAction("Повторить подключение", symbol: "arrow.clockwise", id: "retry-connection") {
+                primaryAction(failed ? "Повторить подключение" : "Подключиться",
+                              symbol: failed ? "arrow.clockwise" : "arrow.right", id: "retry-connection") {
                     model.start(preservingHistory: true)
                 }
             }
