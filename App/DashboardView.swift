@@ -103,14 +103,10 @@ struct DashboardView: View {
 
     private var onboarding: some View {
         VStack(alignment: .leading, spacing: GaugeSpacing.section) {
-            Image(systemName: "powerplug")
-                .font(.system(size: 35, weight: .light))
-                .foregroundStyle(palette.accent)
-                .frame(width: 67, height: 67)
-                .background(palette.panel, in: RoundedRectangle(cornerRadius: 13))
-                .accessibilityHidden(true)
-
             GaugeHeading(title: "Подключите автомобиль", subtitle: "Понадобится Bluetooth-адаптер OBD-II.")
+
+            OBDConnectorDiagram()
+                .frame(height: typeSize.isAccessibilitySize ? 74 : 120)
 
             VStack(alignment: .leading, spacing: GaugeSpacing.large) {
                 OnboardingStep(symbol: "arrow.down.to.line", title: "Вставьте адаптер", detail: "В диагностический разъём автомобиля.")
@@ -269,6 +265,57 @@ struct DashboardView: View {
                         detail: voltage == nil ? nil : model.supplementary?.voltageSource == .adapter ? "Оценка адаптера" : "От автомобиля",
                         id: "voltage-value")
         }
+    }
+}
+
+private struct OBDConnectorDiagram: View {
+    @Environment(\.gaugePalette) private var palette
+
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.height / 108, size.width / 280)
+            let center = size.width / 2
+            let top = (size.height - 96 * scale) / 2
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: center + x * scale, y: top + y * scale)
+            }
+
+            var housing = Path()
+            housing.move(to: point(-63, 13))
+            housing.addLine(to: point(63, 13))
+            housing.addLine(to: point(49, 63))
+            housing.addQuadCurve(to: point(41, 70), control: point(47, 70))
+            housing.addLine(to: point(-41, 70))
+            housing.addQuadCurve(to: point(-49, 63), control: point(-47, 70))
+            housing.closeSubpath()
+            context.fill(housing, with: .color(palette.panel))
+            context.stroke(housing, with: .color(palette.accent), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+
+            var cable = Path()
+            cable.move(to: point(-28, 70))
+            cable.addLine(to: point(-28, 83))
+            cable.addLine(to: point(28, 83))
+            cable.addLine(to: point(28, 70))
+            cable.move(to: point(0, 84))
+            cable.addLine(to: point(0, 96))
+            context.stroke(cable, with: .color(palette.accent), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+
+            for row in 0..<2 {
+                for column in 0..<8 {
+                    let pin = point(-37.5 + 10 * CGFloat(column), 29 + 16 * CGFloat(row))
+                    context.fill(Path(roundedRect: CGRect(origin: pin, size: CGSize(width: 5 * scale, height: 5 * scale)),
+                                      cornerRadius: scale), with: .color(palette.muted))
+                }
+            }
+
+            for side in [-1.0, 1.0] {
+                var guide = Path()
+                guide.move(to: point(CGFloat(side) * 73, 41))
+                guide.addLine(to: point(CGFloat(side) * 127, 41))
+                context.stroke(guide, with: .color(palette.line), lineWidth: 1)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

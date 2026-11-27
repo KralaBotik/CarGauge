@@ -12,7 +12,9 @@ final class DashboardUITests: XCTestCase {
         XCTAssertEqual(find.label, "Найти адаптер")
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         XCTAssertFalse(app.staticTexts["rpm-value"].exists)
-        assertBottomNavigation(app)
+        let barTop = assertBottomNavigation(app)
+        XCTAssertGreaterThan(find.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(find.frame.maxY, barTop)
         snapshot(app, named: "01-Onboarding")
     }
 
@@ -26,6 +28,11 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.buttons["IOS-VLINK"].exists)
         let identifiers = (0..<named.count).compactMap { named.element(boundBy: $0).value as? String }
         XCTAssertEqual(Set(identifiers), ["ID · A481B001", "ID · A481B002"])
+        XCTAssertFalse(app.buttons["Устройство рядом"].exists)
+        let otherDevices = app.buttons["other-devices-disclosure"]
+        XCTAssertTrue(otherDevices.isHittable)
+        otherDevices.tap()
+        XCTAssertTrue(app.buttons["Устройство рядом"].exists)
         XCTAssertFalse(app.buttons["Устройство без имени"].exists)
         let extended = app.buttons["extended-discovery"]
         for _ in 0..<3 where !extended.isHittable { app.swipeUp() }
@@ -34,6 +41,39 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "02-Adapter-Discovery")
         app.buttons["close-adapter-setup"].tap()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
+    }
+
+    @MainActor func testEmptyDiscoveryAndTripHaveRecoveryStates() {
+        let app = launch(appearance: "light", options: ["--adapter-list-fixture", "--empty-adapter-list-fixture"])
+        app.buttons["find-adapter"].tap()
+        XCTAssertTrue(app.staticTexts["no-adapters-found"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.buttons["rescan-adapters"].isHittable)
+        XCTAssertTrue(app.buttons["extended-discovery"].isHittable)
+        snapshot(app, named: "20-Adapter-Empty")
+        app.buttons["close-adapter-setup"].tap()
+        app.buttons["history-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["history-sample"].exists)
+        snapshot(app, named: "19-Empty-Trip")
+    }
+
+    @MainActor func testHistorySampleCanBeInspectedAndLeavesLiveReadingAlone() {
+        let app = launch(options: ["--connected-dashboard-fixture"])
+        app.buttons["history-nav"].tap()
+        let sample = app.staticTexts["history-sample"]
+        XCTAssertTrue(sample.waitForExistence(timeout: responseTimeout))
+        let latest = sample.label
+        let previous = app.buttons["history-previous-reading"]
+        XCTAssertTrue(previous.isHittable)
+        previous.tap()
+        XCTAssertTrue(sample.waitForDifferentLabel(from: latest, timeout: responseTimeout))
+        snapshot(app, named: "18-History-Selection")
+        let next = app.buttons["history-next-reading"]
+        XCTAssertTrue(next.isEnabled)
+        next.tap()
+        XCTAssertTrue(sample.wait(for: \.label, toEqual: latest, timeout: responseTimeout))
+        app.buttons["instruments-nav"].tap()
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "92 градусов Цельсия", timeout: responseTimeout))
     }
 
     @MainActor func testWaitingForFirstReadingDoesNotShowEmptyInstruments() {
@@ -103,6 +143,7 @@ final class DashboardUITests: XCTestCase {
         if !stepper.isHittable { app.swipeDown() }
         stepper.buttons.element(boundBy: 1).tap()
         XCTAssertTrue(stepper.waitForTemperature(106, timeout: responseTimeout))
+        snapshot(app, named: "21-Thermal-Settings")
         for _ in 0..<3 where !reset.isHittable { app.swipeUp() }
         reset.tap()
         XCTAssertTrue(stepper.waitForTemperature(105, timeout: responseTimeout))
@@ -313,5 +354,9 @@ private extension XCUIElement {
     @MainActor private func wait(for predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    @MainActor func waitForDifferentLabel(from label: String, timeout: TimeInterval) -> Bool {
+        wait(for: NSPredicate(format: "exists == YES AND label != %@", label), timeout: timeout)
     }
 }

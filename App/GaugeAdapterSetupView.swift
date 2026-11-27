@@ -41,6 +41,7 @@ private struct AdapterList: View {
     @State private var expanded = false
     @State private var showsOtherDevices = false
     #if DEBUG
+    private static let emptyFixture = ProcessInfo.processInfo.arguments.contains("--empty-adapter-list-fixture")
     private static let fixtureDevices = [
         BLEDevice(id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7A, 0x12, 0xA4, 0x81, 0xB0, 0x01)),
                   name: "Vgate iCar Pro BLE", rssi: -48),
@@ -55,7 +56,7 @@ private struct AdapterList: View {
     private var devices: [BLEDevice] {
         #if DEBUG
         if model.discoveryFixture {
-            return Self.fixtureDevices.filter { expanded || $0.hasName }
+            return Self.emptyFixture ? [] : Self.fixtureDevices.filter { expanded || $0.hasName }
         }
         #endif
         return ble.devices
