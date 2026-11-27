@@ -21,14 +21,17 @@ enum DiagnosticRequest: Equatable, Sendable {
     static let freezePages: [UInt8] = [0x00, 0x20, 0x40]
     // Profiles for extended modules remain metadata only until a documented
     // vehicle-specific addressing and read-command contract is implemented.
-    static let allowed = Set(
-        ([.protocolNumber, .readiness, .freezeCause]
-            + DiagnosticCodeStatus.allCases.map { .codes($0) }
-            + pages.map { .supported(base: $0, freeze: false) }
-            + freezePages.map { .supported(base: $0, freeze: true) }
-            + DiagnosticSensor.allCases.flatMap { [.sample($0, freeze: false), .sample($0, freeze: true)] })
-        .map(\.wire)
-    )
+    static let allowed: Set<String> = {
+        var requests: [Self] = [.protocolNumber, .readiness, .freezeCause]
+        requests += DiagnosticCodeStatus.allCases.map { .codes($0) }
+        requests += pages.map { .supported(base: $0, freeze: false) }
+        requests += freezePages.map { .supported(base: $0, freeze: true) }
+        for sensor in DiagnosticSensor.allCases {
+            requests.append(.sample(sensor, freeze: false))
+            requests.append(.sample(sensor, freeze: true))
+        }
+        return Set(requests.map(\.wire))
+    }()
 }
 
 /// One manually started foreground survey. The caller schedules one request per

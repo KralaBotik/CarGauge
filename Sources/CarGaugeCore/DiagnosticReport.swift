@@ -300,11 +300,12 @@ public struct DiagnosticReport: Codable, Sendable {
     public func summary() -> String {
         let status = state == .completed ? "Очередь запросов завершена" : "Обследование неполное"
         let codeRows = DiagnosticCodeStatus.allCases.map { item in
-            let groups = codes.first { $0.status == item }?.replyGroups
-            return "\(item.title): \(groups.map { list in
-                let values = Array(Set(list.flatMap { $0 })).sorted()
-                return values.isEmpty ? "коды не сообщены в полученных ответах" : values.joined(separator: ", ")
-            } ?? "нет достоверного результата")"
+            guard let groups = codes.first(where: { $0.status == item })?.replyGroups else {
+                return "\(item.title): нет достоверного результата"
+            }
+            let values = Array(Set(groups.flatMap { $0 })).sorted()
+            let description = values.isEmpty ? "коды не сообщены в полученных ответах" : values.joined(separator: ", ")
+            return "\(item.title): \(description)"
         }
         let commandRows = exchanges.map { "\($0.command) · \($0.outcome.title) · \($0.elapsedMilliseconds) мс" }
         return (["CarGauge · Hyundai Elantra HD / G4FC", status,
