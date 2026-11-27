@@ -48,7 +48,7 @@ public enum DiagnosticSensor: UInt8, CaseIterable, Codable, Sendable {
     func value(_ bytes: [UInt8]) -> Double? {
         let a = Double(bytes[0])
         let word = bytes.reduce(0) { ($0 << 8) | Int($1) }
-        switch self {
+        return switch self {
         case .load: a * 100 / 255
         case .coolant, .intakeTemperature: a - 40
         case .manifoldPressure, .barometricPressure, .speed: a
@@ -288,11 +288,12 @@ public struct DiagnosticReport: Codable, Sendable {
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let columns = "collected_at_utc,origin,freeze_frame,pid,reply_in_request,value,unit,raw_pid_bytes"
         let rows = measurements.map { sample in
-            [iso.string(from: sample.collectedAt), sample.origin,
-             sample.freezeFrame.map(String.init) ?? "", sample.sensor.pid, String(sample.responseIndex),
-             sample.value.map { String($0) } ?? "", sample.sensor.unit,
-             sample.rawBytes.map { String(format: "%02X", $0) }.joined()]
-                .map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }.joined(separator: ",")
+            let frame = sample.freezeFrame.map { String($0) } ?? ""
+            let value = sample.value.map { String($0) } ?? ""
+            let raw = sample.rawBytes.map { String(format: "%02X", $0) }.joined()
+            let fields = [iso.string(from: sample.collectedAt), sample.origin, frame, sample.sensor.pid,
+                          String(sample.responseIndex), value, sample.sensor.unit, raw]
+            return fields.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }.joined(separator: ",")
         }
         return ([columns] + rows).joined(separator: "\n") + "\n"
     }
