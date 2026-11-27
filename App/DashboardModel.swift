@@ -61,6 +61,7 @@ enum MeasurementPhase {
         return source == .vehicle && hasConfiguredAdapter
     }
     var surveyIsRunning: Bool { diagnosticReport?.state == .running && survey != nil }
+    var surveyAllowsExport: Bool { survey == nil }
 
     @Published private(set) var adapterStage = "Ожидание"
     @Published private var supportResponses: [OBDSupportPage: String] = [:]
@@ -213,7 +214,8 @@ enum MeasurementPhase {
         guard canSurvey else { return }
         let candidate = DiagnosticSurvey(firstObservedCoolantAt: firstObservedOnLink,
                                          adapterName: configuredName ?? ble.connectedName,
-                                         adapterIdentification: adapterIdentification, source: source)
+                                         adapterIdentification: adapterIdentification, source: source,
+                                         stationaryConfirmedByUser: true)
         survey = candidate
         publishSurvey(candidate)
     }
@@ -228,6 +230,7 @@ enum MeasurementPhase {
 
     private func publishSurvey(_ work: DiagnosticSurvey) {
         guard survey === work || diagnosticReport?.id == work.report.id else { return }
+        if work.report.state != .running, !work.isExecuting, survey === work { survey = nil }
         diagnosticReport = work.report
         do {
             try diagnosticStore.save(work.report)
@@ -235,7 +238,6 @@ enum MeasurementPhase {
         } catch {
             diagnosticStorageMessage = "Локальная запись недоступна. Сохраните отчёт через экспорт."
         }
-        if work.report.state != .running, !work.isExecuting, survey === work { survey = nil }
     }
 
     func setThreshold(_ limit: ThermalThresholds.Limit, to value: Int) {

@@ -210,6 +210,7 @@ public struct DiagnosticReport: Codable, Sendable {
     public let adapterName: String?
     public let adapterIdentification: String?
     public let source: String
+    public let stationaryConfirmedByUser: Bool
     public internal(set) var state: State = .running
     public internal(set) var finishedAt: Date?
     public internal(set) var interruption: String?
@@ -227,7 +228,7 @@ public struct DiagnosticReport: Codable, Sendable {
     public var modules: [Module] {
         let genericReply = exchanges.contains { $0.outcome == .received && !$0.command.hasPrefix("AT") }
         return [
-            Module(id: "emissions", name: "Двигатель · стандартный OBD",
+            Module(id: "emissions", name: "Стандартный OBD · выбросы",
                    status: genericReply ? .answeredGenericOBD : .notChecked),
             Module(id: "abs", name: "ABS/ESP", status: .profileUnverified),
             Module(id: "srs", name: "SRS", status: .profileUnverified),
@@ -237,7 +238,8 @@ public struct DiagnosticReport: Codable, Sendable {
         ]
     }
 
-    init(startedAt: Date, firstObservedCoolantAt: Date?, adapterName: String?, adapterIdentification: String?, source: DataSource) {
+    init(startedAt: Date, firstObservedCoolantAt: Date?, adapterName: String?, adapterIdentification: String?,
+         source: DataSource, stationaryConfirmedByUser: Bool) {
         schemaVersion = Self.currentSchema
         id = UUID()
         self.startedAt = startedAt
@@ -245,6 +247,7 @@ public struct DiagnosticReport: Codable, Sendable {
         self.adapterName = adapterName
         self.adapterIdentification = adapterIdentification
         self.source = source == .vehicle ? "vehicle" : "test_fixture"
+        self.stationaryConfirmedByUser = stationaryConfirmedByUser
     }
 
     private struct ExportEnvelope: Encodable {
@@ -265,6 +268,7 @@ public struct DiagnosticReport: Codable, Sendable {
             conditions: ["ecuAddressing": "generic_obd_functional_anonymous_replies",
                          "beforeFirstObservation": "unknown",
                          "gps": "not_collected", "motion": "not_verified_at_every_request",
+                         "stationaryConfirmation": stationaryConfirmedByUser ? "user_confirmed" : "not_recorded",
                          "freezeFrameTimestamp": "read_time_not_fault_time",
                          "rawResponses": includeRaw ? "assembled_elm_text_when_available" : "excluded"],
             survey: copy)

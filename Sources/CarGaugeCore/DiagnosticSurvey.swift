@@ -43,9 +43,10 @@ enum DiagnosticRequest: Equatable, Sendable {
     public private(set) var isExecuting = false
 
     public init(firstObservedCoolantAt: Date?, adapterName: String?, adapterIdentification: String? = nil,
-                source: DataSource = .vehicle, now: Date = .now) {
+                source: DataSource = .vehicle, stationaryConfirmedByUser: Bool = false, now: Date = .now) {
         report = DiagnosticReport(startedAt: now, firstObservedCoolantAt: firstObservedCoolantAt,
-                                  adapterName: adapterName, adapterIdentification: adapterIdentification, source: source)
+                                  adapterName: adapterName, adapterIdentification: adapterIdentification, source: source,
+                                  stationaryConfirmedByUser: stationaryConfirmedByUser)
     }
 
     public func interrupt(_ reason: String, at now: Date = .now) {

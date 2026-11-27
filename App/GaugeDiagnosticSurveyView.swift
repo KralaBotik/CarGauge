@@ -116,7 +116,11 @@ struct GaugeDiagnosticSurveyView: View {
                 Label("Экспорт обследования", systemImage: "square.and.arrow.up")
                     .frame(minHeight: 44)
             }
+            .disabled(!model.surveyAllowsExport)
             .accessibilityIdentifier("survey-export")
+            if !model.surveyAllowsExport {
+                Text("Завершается последний запрос…").font(.footnote).foregroundStyle(palette.muted)
+            }
         }
     }
 

@@ -135,7 +135,7 @@ public enum DiagnosticDecoder {
     }
 
     /// CAF1 emits a three-digit hex length, then a six-byte first frame and
-    /// seven-byte consecutive frames. The last can include zero filler. ELM can interleave
+    /// seven-byte consecutive frames. Filler after the announced length is opaque. ELM can interleave
     /// replies from several ECUs. Reject overlaps instead of splicing them.
     private static func readMultiframe(_ lines: [String], index: inout Int, length: Int) throws -> [UInt8] {
         var message: [UInt8] = []
@@ -148,7 +148,6 @@ public enum DiagnosticDecoder {
             let payload = try hexBytes(line.dropFirst(prefix.count))
             let expectedSize = min(sequence == 0 ? 6 : 7, length - message.count)
             let paddedLast = sequence > 0 && expectedSize < 7 && payload.count == 7
-                && payload.dropFirst(expectedSize).allSatisfy { $0 == 0 }
             guard payload.count == expectedSize || paddedLast else { throw OBDError.malformedResponse }
             message.append(contentsOf: payload.prefix(expectedSize))
             index += 1
