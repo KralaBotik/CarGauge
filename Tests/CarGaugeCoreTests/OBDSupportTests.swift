@@ -84,10 +84,17 @@ import Testing
 }
 
 @MainActor
-@Test func capabilitiesOnlyExtendTheReadOnlyCommandAllowlist() {
-    #expect(ELM327Client.allowedCommands == [
-        "ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "0100", "0105", "010C", "0140", "0142", "ATRV"
-    ])
+@Test func telemetryAndSurveyUseOnlyTheReviewedCommandAllowlist() {
+    let adapter: Set<String> = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0", "ATRV", "ATDPN"]
+    let current: Set<String> = [
+        "0100", "0101", "0104", "0105", "010B", "010C", "010D", "010F", "0110", "011F", "0120", "0133",
+        "0140", "0142", "0150", "015E", "0160", "0180", "01A0", "01C0", "01E0"
+    ]
+    let freeze: Set<String> = [
+        "020000", "020200", "020400", "020500", "020B00", "020C00", "020D00", "020F00",
+        "021000", "021F00", "022000", "023300", "024000", "024200", "025000", "025E00"
+    ]
+    #expect(ELM327Client.allowedCommands == adapter.union(current).union(freeze).union(["03", "07", "0A"]))
 }
 
 @MainActor private final class CapabilityFixture: OBDTransport {

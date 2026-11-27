@@ -32,7 +32,7 @@ python scripts/inspect_app_groups.py .\CarGauge-Full-signed.ipa
 
 Для поддерживаемого использования виджета зарегистрируйте оба App ID и одну группу, назначьте её обеим целям, подпишите Full профилями для iPhone и сохраните значение группы в Info.plist. Для сборки можно использовать Xcode с соответствующей командой подписи. Sideloadly указывает Apple Developer Program и Patreon как требования ручной настройки entitlements. Для обычной установки пока используйте Full c Live Activity либо Basic, если расширение блокирует установку. [Матрица Apple](https://developer.apple.com/help/account/reference/supported-capabilities-ios/), [журнал Sideloadly](https://sideloadly.io/changelog.html).
 
-## Приёмка 26 ноября
+## Приёмка на автомобиле
 
 | Условия | Проверка |
 | --- | --- |
