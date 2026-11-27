@@ -37,7 +37,7 @@ struct GlanceWidgetInstrument: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
                 }
-                SampleClock(label: "Снимок", date: sample.sampleDate)
+                SampleClock(label: "Замер", date: sample.sampleDate)
                 if sample.source == .simulator { testBadge }
             } else {
                 Text(unavailableTitle)
@@ -73,7 +73,7 @@ struct GlanceWidgetInstrument: View {
                             .minimumScaleFactor(0.65)
                     }
                 }
-                SampleClock(label: "Снимок", date: sample.sampleDate)
+                SampleClock(label: "Замер", date: sample.sampleDate)
             } else {
                 Text(unavailableTitle).font(.caption.weight(.semibold))
             }
@@ -198,21 +198,21 @@ struct InstrumentPalette {
     let scheme: ColorScheme
 
     var surface: Color {
-        scheme == .dark ? Color(red: 0.06, green: 0.11, blue: 0.13) : Color(red: 0.93, green: 0.96, blue: 0.95)
+        scheme == .dark ? Color(red: 0.09, green: 0.10, blue: 0.11) : Color(red: 0.96, green: 0.95, blue: 0.93)
     }
 
     var reading: Color {
-        scheme == .dark ? Color(red: 0.91, green: 0.96, blue: 0.95) : Color(red: 0.07, green: 0.15, blue: 0.16)
+        scheme == .dark ? Color(red: 0.96, green: 0.94, blue: 0.91) : Color(red: 0.14, green: 0.13, blue: 0.11)
     }
 
     func tone(for level: ThermalLevel) -> Color {
         switch level {
         case .normal:
-            scheme == .dark ? Color(red: 0.60, green: 0.82, blue: 0.79) : Color(red: 0.10, green: 0.36, blue: 0.34)
+            scheme == .dark ? Color(red: 0.64, green: 0.80, blue: 0.66) : Color(red: 0.16, green: 0.38, blue: 0.24)
         case .warning:
-            scheme == .dark ? Color(red: 1, green: 0.75, blue: 0.38) : Color(red: 0.53, green: 0.28, blue: 0.06)
+            scheme == .dark ? Color(red: 0.96, green: 0.75, blue: 0.47) : Color(red: 0.53, green: 0.29, blue: 0.05)
         case .critical:
-            scheme == .dark ? Color(red: 1, green: 0.61, blue: 0.59) : Color(red: 0.62, green: 0.16, blue: 0.16)
+            scheme == .dark ? Color(red: 1, green: 0.66, blue: 0.59) : Color(red: 0.63, green: 0.21, blue: 0.17)
         }
     }
 }

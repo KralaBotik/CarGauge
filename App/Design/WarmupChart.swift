@@ -80,8 +80,14 @@ struct WarmupChart: View {
         }
         .sensoryFeedback(.selection, trigger: selectionFeedback)
         .onChange(of: window.points.first?.id) { _, first in
-            if case .sample(let date) = selection, let first, date < first {
+            guard let first else { return }
+            switch selection {
+            case .sample(let date) where date < first:
                 selection = .latest
+            case .gap(let time) where time < first.timeIntervalSince(window.origin):
+                selection = .latest
+            default:
+                break
             }
         }
     }

@@ -76,6 +76,22 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "92 градусов Цельсия", timeout: responseTimeout))
     }
 
+    @MainActor func testScrubbingAcrossHistoryGapDoesNotInventATemperature() {
+        let app = launch(options: ["--connected-dashboard-fixture"])
+        app.buttons["history-nav"].tap()
+        let plot = app.descendants(matching: .any)["history-plot"].firstMatch
+        XCTAssertTrue(plot.waitForExistence(timeout: responseTimeout))
+        // The fixture suspends samples from 0:28 to 0:48 on the 1:32 time axis.
+        let start = plot.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.5))
+        let gap = plot.coordinate(withNormalizedOffset: CGVector(dx: 0.40, dy: 0.5))
+        start.press(forDuration: 0.08, thenDragTo: gap)
+        XCTAssertTrue(app.staticTexts["history-gap"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["history-sample"].exists)
+        snapshot(app, named: "22-History-Gap")
+        app.buttons["history-previous-reading"].tap()
+        XCTAssertTrue(app.staticTexts["history-sample"].waitForExistence(timeout: responseTimeout))
+    }
+
     @MainActor func testWaitingForFirstReadingDoesNotShowEmptyInstruments() {
         let app = launch(appearance: "dark", options: ["--adapter-waiting-fixture"])
         XCTAssertTrue(app.staticTexts["Ожидание первого замера"].waitForExistence(timeout: responseTimeout))
