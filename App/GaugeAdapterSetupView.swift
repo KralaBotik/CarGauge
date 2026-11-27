@@ -9,16 +9,14 @@ struct GaugeAdapterSetupView: View {
 
     var body: some View {
         NavigationStack {
-            AdapterList(model: model, ble: model.discoveryBLE)
-                .navigationTitle("Подключение")
+            AdapterList(model: model, ble: model.discoveryBLE, cancel: close)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(model.isCheckingSelection ? "Отменить" : "Закрыть") {
-                            model.leaveAdapterSetup()
-                            dismiss()
+                    if !model.isCheckingSelection {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Закрыть", action: close)
+                                .accessibilityIdentifier("close-adapter-setup")
                         }
-                        .accessibilityIdentifier("close-adapter-setup")
                     }
                 }
         }
@@ -27,6 +25,11 @@ struct GaugeAdapterSetupView: View {
         .onDisappear { model.leaveAdapterSetup() }
         .onChange(of: model.completedAdapterSelection) { _, _ in dismiss() }
     }
+
+    private func close() {
+        model.leaveAdapterSetup()
+        dismiss()
+    }
 }
 
 private struct AdapterList: View {
@@ -34,7 +37,9 @@ private struct AdapterList: View {
     @Environment(\.openURL) private var openURL
     @ObservedObject var model: DashboardModel
     @ObservedObject var ble: BLETransport
+    let cancel: () -> Void
     @State private var expanded = false
+    @State private var showsOtherDevices = false
     #if DEBUG
     private static let fixtureDevices = [
         BLEDevice(id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7A, 0x12, 0xA4, 0x81, 0xB0, 0x01)),
@@ -65,28 +70,82 @@ private struct AdapterList: View {
 
     var body: some View {
         let nearby = devices
-        GaugePage {
-            GaugeHeading(title: "Адаптеры рядом", subtitle: "Коснитесь своего адаптера. Сохраним его, когда автомобиль ответит.")
-            #if DEBUG
-            if model.discoveryFixture { SourceIndicator(source: .simulator) }
-            #endif
+        let likely = nearby.filter(\.hasOBDName)
+        let other = nearby.filter { !$0.hasOBDName }
+        GaugePage(spacing: GaugeSpacing.large) {
             if model.isCheckingSelection {
-                GaugeRule()
-                ProgressView("Проверяем связь с автомобилем…")
-                    .tint(palette.accent)
-                    .accessibilityIdentifier("validating-adapter")
+                VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+                    ProgressView().tint(palette.accent).accessibilityHidden(true)
+                    GaugeHeading(title: "Проверяем адаптер",
+                                 subtitle: "Дождитесь ответа автомобиля. Оставьте зажигание включённым.")
+                        .accessibilityIdentifier("validating-adapter")
+                }
+                .padding(.vertical, GaugeSpacing.section)
             } else {
+                GaugeHeading(title: "Адаптеры рядом",
+                             subtitle: "Выберите свой адаптер. Сохраним его после ответа автомобиля.")
+                #if DEBUG
+                if model.discoveryFixture { SourceIndicator(source: .simulator) }
+                #endif
                 discoveryStatus
-                deviceGroup("Вероятные OBD-II адаптеры", devices: nearby.filter(\.hasOBDName), id: "likely-adapters")
-                deviceGroup("Другие устройства", devices: nearby.filter { !$0.hasOBDName }, id: "other-devices")
-                if scanState == .finished || scanState == .idle {
+                if canDiscover {
+                    if !likely.isEmpty {
+                        GaugeSection(title: "Вероятные OBD-II адаптеры", headerID: "likely-adapters") {
+                            deviceRows(likely)
+                        }
+                    }
+                    if !other.isEmpty {
+                        GaugeSection(title: "Другие устройства", headerID: "other-devices") {
+                            if !likely.isEmpty {
+                                otherDevicesDisclosure(count: other.count)
+                            }
+                            if likely.isEmpty || showsOtherDevices {
+                                deviceRows(other)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            actions(emphasizesRescan: nearby.isEmpty)
+        }
+        .sensoryFeedback(.selection, trigger: showsOtherDevices)
+        .accessibilityIdentifier("adapter-setup")
+    }
+
+    private var canDiscover: Bool {
+        switch scanState {
+        case .idle, .scanning, .finished: true
+        case .poweredOff, .unauthorized, .unavailable: false
+        }
+    }
+
+    @ViewBuilder private func actions(emphasizesRescan: Bool) -> some View {
+        if model.isCheckingSelection {
+            bottomActions {
+                Button("Отменить проверку", action: cancel)
+                    .buttonStyle(GaugeActionStyle())
+                    .accessibilityIdentifier("close-adapter-setup")
+            }
+        } else if scanState == .unauthorized {
+            bottomActions {
+                Button("Открыть настройки iPhone") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .buttonStyle(GaugeActionStyle(emphasized: true))
+            }
+        } else if scanState != .scanning || !expanded {
+            bottomActions {
+                if scanState != .scanning {
                     Button("Обновить список") { model.discoverAdapters(extended: expanded) }
-                        .buttonStyle(GaugeActionStyle(emphasized: nearby.isEmpty))
+                        .buttonStyle(GaugeActionStyle(emphasized: emphasizesRescan))
                         .accessibilityIdentifier("rescan-adapters")
                 }
-                if !expanded && (scanState == .finished || scanState == .scanning || scanState == .idle) {
+                if !expanded && canDiscover {
                     Button("Искать безымянные устройства") {
                         expanded = true
+                        showsOtherDevices = true
                         model.discoverAdapters(extended: true)
                     }
                     .buttonStyle(GaugeActionStyle())
@@ -94,48 +153,79 @@ private struct AdapterList: View {
                 }
             }
         }
-        .accessibilityIdentifier("adapter-setup")
+    }
+
+    private func bottomActions<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            GaugeRule()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: GaugeSpacing.small, content: content)
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(spacing: GaugeSpacing.small, content: content)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.horizontal, GaugeSpacing.page)
+            .padding(.vertical, GaugeSpacing.small)
+            .frame(maxWidth: 560)
+        }
+        .frame(maxWidth: .infinity)
+        .background(palette.canvas, ignoresSafeAreaEdges: .bottom)
     }
 
     @ViewBuilder private var discoveryStatus: some View {
         if let message = model.adapterSetupMessage {
-            Text(message).foregroundStyle(palette.warning)
+            Label(message, systemImage: "exclamationmark.circle")
+                .font(.subheadline).foregroundStyle(palette.warning)
         }
         switch scanState {
         case .scanning:
             ProgressView("Ищем устройства…").tint(palette.accent)
                 .accessibilityIdentifier("scanning-adapters")
         case .poweredOff:
-            Text("Включите Bluetooth на iPhone, затем обновите список.").foregroundStyle(palette.warning)
-            Button("Обновить список") { model.discoverAdapters(extended: expanded) }
-                .buttonStyle(GaugeActionStyle())
+            Label("Включите Bluetooth на iPhone, затем обновите список.", systemImage: "bolt.slash")
+                .foregroundStyle(palette.warning)
         case .unauthorized:
-            Text("Разрешите CarGauge доступ к Bluetooth в настройках iPhone.")
-            Button("Открыть настройки iPhone") {
-                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-            }
-            .buttonStyle(GaugeActionStyle())
+            Label("Разрешите CarGauge доступ к Bluetooth в настройках iPhone.", systemImage: "lock")
         case .unavailable:
-            Text("Сейчас Bluetooth недоступен. Попробуйте снова.").foregroundStyle(palette.warning)
-            Button("Обновить список") { model.discoverAdapters(extended: expanded) }
-                .buttonStyle(GaugeActionStyle())
+            Label("Bluetooth недоступен. Попробуйте обновить список.", systemImage: "exclamationmark.circle")
+                .foregroundStyle(palette.warning)
         case .finished where devices.isEmpty:
-            Text("Ничего не нашли. Проверьте питание адаптера и попробуйте снова.")
+            Text("Адаптер не найден. Проверьте питание адаптера и зажигание.")
+                .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("no-adapters-found")
         default:
             EmptyView()
         }
     }
 
-    @ViewBuilder private func deviceGroup(_ title: String, devices: [BLEDevice], id: String) -> some View {
-        if !devices.isEmpty {
-            GaugeSection(title: title, headerID: id) {
-                VStack(spacing: 0) {
-                    ForEach(devices) { device in
-                        adapterRow(device, among: devices)
-                        if device.id != devices.last?.id { GaugeRule() }
-                    }
-                }
+    private func otherDevicesDisclosure(count: Int) -> some View {
+        Button {
+            showsOtherDevices.toggle()
+        } label: {
+            HStack(spacing: GaugeSpacing.small) {
+                Text(showsOtherDevices ? "Скрыть список" : "Показать список")
+                Spacer()
+                Text(count.formatted()).monospacedDigit()
+                Image(systemName: showsOtherDevices ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(palette.accent)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(showsOtherDevices ? "Скрыть другие устройства" : "Показать другие устройства")
+        .accessibilityValue("\(count)")
+        .accessibilityIdentifier("other-devices-disclosure")
+    }
+
+    private func deviceRows(_ devices: [BLEDevice]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(devices) { device in
+                adapterRow(device, among: devices)
+                if device.id != devices.last?.id { GaugeRule() }
             }
         }
     }
@@ -153,9 +243,10 @@ private struct AdapterList: View {
                 Image(systemName: device.hasOBDName ? "car.side" : "dot.radiowaves.left.and.right")
                     .imageScale(.medium)
                     .foregroundStyle(device.hasOBDName ? palette.accent : palette.muted)
-                    .frame(width: 30)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-                    Text(title).font(.body.weight(.medium))
+                    Text(verbatim: title).font(.body.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true)
                     if let identifier {
                         Text(identifier).font(.caption.monospaced()).foregroundStyle(palette.muted)
@@ -166,8 +257,9 @@ private struct AdapterList: View {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(palette.muted)
+                    .accessibilityHidden(true)
             }
-            .padding(.vertical, GaugeSpacing.medium)
+            .padding(.vertical, GaugeSpacing.small)
             .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
