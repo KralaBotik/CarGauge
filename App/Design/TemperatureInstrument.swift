@@ -4,69 +4,76 @@ import SwiftUI
 struct TemperatureInstrument: View {
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
-    @ScaledMetric(relativeTo: .largeTitle) private var digitSize: CGFloat = 86
-    @ScaledMetric(relativeTo: .title) private var digitalDigitSize: CGFloat = 58
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .largeTitle) private var displaySize: CGFloat = 112
+
     let value: Double?
     let thresholds: ThermalThresholds
     let alert: ThermalLevel
 
     var body: some View {
-        Group {
-            if typeSize >= .xxLarge {
-                VStack(alignment: .leading, spacing: GaugeSpacing.small) { readout }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, GaugeSpacing.small)
+        VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
+            Text("Температура ОЖ")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(palette.muted)
+                .accessibilityLabel("Температура охлаждающей жидкости")
+                .accessibilityAddTraits(.isHeader)
+
+            if let value {
+                digits(Int(value))
             } else {
-                ZStack(alignment: .bottom) {
-                    ThermalDial(value: value, thresholds: thresholds, state: state)
-                        .frame(height: 230)
-                        .accessibilityHidden(true)
-                    VStack(spacing: 0) { readout }
-                        .padding(.horizontal, 26)
-                        .padding(.bottom, 12)
-                        .multilineTextAlignment(.center)
-                }
+                Text("Нет свежей температуры")
+                    .font(.title2.weight(.semibold))
+                    .accessibilityLabel("Нет свежих данных")
+                    .accessibilityIdentifier("coolant-value")
+            }
+
+            let status = statusContent
+            if value != nil || alert != .normal {
+                GaugeStatus(title: status.title, symbol: status.symbol, tone: status.tone)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier(status.id)
+            }
+
+            if let value, let state, !typeSize.isAccessibilitySize {
+                TemperatureTrack(value: value, thresholds: thresholds, state: state)
+                    .id(status.title)
+                    .padding(.top, GaugeSpacing.xsmall)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private var readout: some View {
-        Text(typeSize.isAccessibilitySize ? "Температура ОЖ" : "Охлаждающая жидкость")
-            .font(.subheadline.weight(.medium))
+    private func digits(_ number: Int) -> some View {
+        let size = min(displaySize, 134)
+        let amount = Text(number, format: .number.grouping(.never))
+            .font(.system(size: size, weight: .medium))
+            .monospacedDigit()
+            .tracking(-size * 0.045)
+        let unit = Text("°C")
+            .font(.title2.weight(.medium))
             .foregroundStyle(palette.muted)
-            .accessibilityLabel("Температура охлаждающей жидкости")
-            .accessibilityAddTraits(.isHeader)
-        digits
-        let presentation = statusContent
-        GaugeStatus(title: presentation.title, symbol: presentation.symbol, tone: presentation.tone)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier(presentation.id)
+
+        return Text("\(amount) \(unit)")
+            .foregroundStyle(readingTone)
+            .lineLimit(1)
+            .minimumScaleFactor(0.65)
+            .contentTransition(reduceMotion ? .identity : .numericText(value: Double(number)))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: number)
+            .accessibilityLabel("\(number) градусов Цельсия")
+            .accessibilityIdentifier("coolant-value")
     }
 
     private var state: EngineTemperatureState? {
         value.map { thresholds.state(at: $0, alert: alert) }
     }
 
-    private var digits: some View {
-        let number = value.map { String(Int($0)) } ?? "—"
-        let digit = Text(number)
-            .font(.system(size: typeSize >= .xxLarge ? digitalDigitSize : digitSize, weight: .semibold))
-            .monospacedDigit()
-            .tracking(-3)
-        let unit = Text("°C").font(.title2.weight(.medium)).foregroundColor(palette.muted)
-        let readout: LocalizedStringKey = value == nil ? "\(digit)" : "\(digit) \(unit)"
-        let tone = switch state {
-        case .critical: palette.critical
+    private var readingTone: Color {
+        switch state {
         case .warning: palette.warning
-        case nil: palette.muted
+        case .critical: palette.critical
         default: palette.text
         }
-        return Text(readout)
-            .foregroundStyle(tone)
-            .lineLimit(1)
-            .minimumScaleFactor(0.45)
-            .accessibilityLabel(value == nil ? "Нет свежих данных" : "\(number) градусов Цельсия")
-            .accessibilityIdentifier("coolant-value")
     }
 
     private var statusContent: (title: String, symbol: String, tone: Color, id: String) {
@@ -85,107 +92,62 @@ struct TemperatureInstrument: View {
     }
 }
 
-private struct ThermalDial: View {
+private struct TemperatureTrack: View {
     @Environment(\.gaugePalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let value: Double?
+    let value: Double
     let thresholds: ThermalThresholds
-    let state: EngineTemperatureState?
+    let state: EngineTemperatureState
 
-    private let lower = -40.0
-    private var upper: Double { Double(max(130, thresholds.critical + 12)) }
-
-    private func fraction(_ value: Double) -> Double {
-        min(1, max(0, (value - lower) / (upper - lower)))
-    }
+    private var lower: Double { Double(thresholds.operating - 25) }
+    private var upper: Double { Double(thresholds.critical + 12) }
 
     var body: some View {
-        let operating = fraction(Double(thresholds.operating))
-        let warning = fraction(Double(thresholds.warning))
-        let critical = fraction(Double(thresholds.critical))
-        Canvas { context, size in
-            let dial = DialGeometry(size: size)
-            let bands: [(Double, Double, Color)] = [
-                (0, operating, palette.warming),
-                (operating, warning, palette.operating),
-                (warning, critical, palette.warning),
-                (critical, 1, palette.critical),
-            ]
-            for (start, end, tone) in bands {
-                let gap = 0.003
-                context.stroke(dial.arc(from: start + gap, to: end - gap),
-                               with: .color(value == nil ? palette.line : tone.opacity(0.55)),
-                               style: StrokeStyle(lineWidth: 5, lineCap: .butt))
-            }
-
-            for tick in 0...34 {
-                let major = tick.isMultiple(of: 4) || tick == 34
-                let position = Double(tick) / 34
-                var mark = Path()
-                mark.move(to: dial.point(at: position, inset: 9))
-                mark.addLine(to: dial.point(at: position, inset: major ? 20 : 14))
-                context.stroke(mark, with: .color(major ? palette.muted : palette.line),
-                               style: StrokeStyle(lineWidth: 1, lineCap: .round))
-            }
-        }
-        .overlay {
-            if let value, let state {
-                let position = fraction(value)
-                palette.tone(for: state)
-                    .mask {
-                        DialMarker(position: position)
-                            .animation(reduceMotion ? nil : .easeOut(duration: 0.26), value: position)
+        VStack(spacing: GaugeSpacing.small) {
+            GeometryReader { geometry in
+                let width = max(1, geometry.size.width - 8)
+                let marker = 4 + width * fraction(value)
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, _ in
+                        let bounds = [lower, Double(thresholds.operating), Double(thresholds.warning),
+                                      Double(thresholds.critical), upper]
+                        let colors = [palette.warming, palette.operating, palette.warning, palette.critical]
+                        for index in colors.indices {
+                            let start = width * fraction(bounds[index])
+                            let end = width * fraction(bounds[index + 1])
+                            let line = CGRect(x: start + 4, y: 4, width: max(0, end - start - 2), height: 4)
+                            context.fill(Path(roundedRect: line, cornerRadius: 1),
+                                         with: .color(colors[index].opacity(0.62)))
+                        }
                     }
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if value != nil {
-                HStack {
-                    Text("\(Int(lower))°")
-                    Spacer()
-                    Text("\(Int(upper))°")
+
+                    if (lower...upper).contains(value) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(palette.tone(for: state))
+                            .frame(width: 7, height: 12)
+                            .position(x: marker, y: 6)
+                            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: marker)
+                    }
                 }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(palette.muted)
-                .padding(.horizontal, 6)
-                .padding(.bottom, 1)
-                .environment(\.layoutDirection, .leftToRight)
             }
+            .frame(height: 12)
+            HStack {
+                Text("\(Int(lower))°")
+                Spacer()
+                if value < lower || value > upper {
+                    Text(value < lower ? "Ниже шкалы" : "Выше шкалы")
+                    Spacer()
+                }
+                Text("\(Int(upper))°")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(palette.muted)
         }
-    }
-}
-
-private struct DialGeometry {
-    let size: CGSize
-    var radius: CGFloat { min(size.width / 2 - 16, size.height - 73) }
-
-    func point(at fraction: Double, inset: CGFloat = 0) -> CGPoint {
-        let angle = (-195 + fraction * 210) * Double.pi / 180
-        let distance = max(0, radius - inset)
-        return CGPoint(x: size.width / 2 + cos(angle) * distance,
-                       y: size.height - 65 + sin(angle) * distance)
+        .environment(\.layoutDirection, .leftToRight)
+        .accessibilityHidden(true)
     }
 
-    func arc(from start: Double, to end: Double) -> Path {
-        var path = Path()
-        path.move(to: point(at: start))
-        for step in 1...40 {
-            path.addLine(to: point(at: start + (end - start) * Double(step) / 40))
-        }
-        return path
-    }
-}
-
-private struct DialMarker: Shape {
-    var position: Double
-
-    var animatableData: Double {
-        get { position }
-        set { position = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let point = DialGeometry(size: rect.size).point(at: position)
-        return Path(ellipseIn: CGRect(x: point.x - 5.5, y: point.y - 5.5, width: 11, height: 11))
+    private func fraction(_ reading: Double) -> CGFloat {
+        CGFloat(min(1, max(0, (reading - lower) / (upper - lower))))
     }
 }

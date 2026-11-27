@@ -1,51 +1,49 @@
 import CarGaugeCore
 import SwiftUI
+import UIKit
 
 struct DashboardView: View {
     @ObservedObject var model: DashboardModel
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.locale) private var locale
-    var previewDate: Date? = nil
+    @Environment(\.openURL) private var openURL
+
+    var previewDate: Date?
     let showHistory: () -> Void
     let showAdapter: () -> Void
 
     var body: some View {
-        GaugePage(spacing: GaugeSpacing.medium) {
+        GaugePage(spacing: GaugeSpacing.large) {
             dashboardHeader
             GaugeRule()
-
             if needsAdapter {
-                adapterOnboarding
+                onboarding
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let now = previewDate ?? context.date
-                    let coolant = model.phase == .parked ? nil : model.coolant?.gaugeValue(at: now)
-                    if model.phase == .parked {
-                        parkedState
-                    } else if coolant == nil && model.history.isEmpty {
-                        waitingState
-                    } else {
-                        VStack(spacing: GaugeSpacing.medium) {
-                            TemperatureInstrument(value: coolant, thresholds: model.thresholds, alert: model.level)
-                            GaugeRule()
-                            metrics(at: now)
-                            if model.phase == .failed || model.phase == .stopped { retryButton }
-                        }
-                    }
+                    instruments(at: previewDate ?? context.date)
                 }
-
                 if !model.history.isEmpty { chartSection }
             }
         }
         .accessibilityIdentifier("instruments-screen")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let action = bottomAction {
+                primaryAction(action.title, symbol: action.symbol, id: action.id, action: action.perform)
+                    .frame(maxWidth: 516)
+                    .padding(.horizontal, GaugeSpacing.page)
+                    .padding(.vertical, GaugeSpacing.medium)
+                    .frame(maxWidth: .infinity)
+                    .background(palette.canvas)
+            }
+        }
     }
 
     private var isSimulation: Bool {
         #if DEBUG
-        return model.source == .simulator
+        model.source == .simulator
         #else
-        return false
+        false
         #endif
     }
 
@@ -53,23 +51,51 @@ struct DashboardView: View {
         !model.hasConfiguredAdapter && !model.canRetryConnection && !model.isRunning && !isSimulation
     }
 
+    private var bottomAction: (title: String, symbol: String, id: String, perform: () -> Void)? {
+        if needsAdapter {
+            return ("Найти адаптер", "arrow.right", "find-adapter", showAdapter)
+        }
+        if model.phase == .parked {
+            return ("Возобновить измерения", "arrow.right", "resume-measurements", { model.start() })
+        }
+        let failed = model.phase == .failed
+        guard failed || model.phase == .stopped || model.phase == .idle else { return nil }
+        if failed && model.ble.diagnosticDetail == .unauthorized {
+            return ("Открыть настройки iPhone", "arrow.up.right", "open-bluetooth-settings", {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            })
+        }
+        guard model.canRetryConnection else { return nil }
+        return (failed ? "Повторить подключение" : "Подключиться",
+                failed ? "arrow.clockwise" : "arrow.right", "retry-connection", {
+                    model.start(preservingHistory: true)
+                })
+    }
+
     private var dashboardHeader: some View {
-        let title = Text("CarGauge")
-            .font(.title3.weight(.bold))
-            .accessibilityAddTraits(.isHeader)
+        let wordmark = HStack(spacing: 8) {
+            Image(systemName: "waveform.path")
+                .font(.body.weight(.medium))
+                .foregroundStyle(palette.accent)
+                .accessibilityHidden(true)
+            Text("CarGauge")
+                .font(.title3.weight(.semibold))
+                .tracking(-0.7)
+                .accessibilityAddTraits(.isHeader)
+        }
 
         return VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
             if needsAdapter {
-                title
+                wordmark
             } else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .firstTextBaseline, spacing: GaugeSpacing.large) {
-                        title.fixedSize(horizontal: true, vertical: false)
+                    HStack(spacing: GaugeSpacing.medium) {
+                        wordmark.fixedSize(horizontal: true, vertical: false)
                         Spacer(minLength: 0)
                         connectionStatus.fixedSize(horizontal: true, vertical: false)
                     }
-                    VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-                        title
+                    VStack(alignment: .leading, spacing: GaugeSpacing.small) {
+                        wordmark
                         connectionStatus
                     }
                 }
@@ -83,107 +109,126 @@ struct DashboardView: View {
 
     private var connectionStatus: some View {
         let (symbol, tone): (String, Color) = switch model.phase {
-        case .streaming: ("checkmark.circle.fill", palette.operating)
+        case .streaming: ("link", palette.operating)
         case .connecting, .retrying: ("dot.radiowaves.left.and.right", palette.accent)
         case .failed: ("exclamationmark.circle", palette.warning)
         case .parked, .stopped: ("pause.circle", palette.muted)
         case .idle, .awaitingAdapter: ("link", palette.muted)
         }
 
-        return GaugeStatus(title: model.connectionTitle, symbol: symbol, tone: tone)
+        return Label(model.connectionTitle, systemImage: symbol)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(tone)
             .accessibilityIdentifier("connection-status")
     }
 
-    private var adapterOnboarding: some View {
+    private var onboarding: some View {
         VStack(alignment: .leading, spacing: GaugeSpacing.section) {
-            PairingIllustration()
-                .padding(.top, GaugeSpacing.large)
-            GaugeHeading(title: "Подключите автомобиль",
-                         subtitle: "CarGauge считывает температуру двигателя через Bluetooth-адаптер.")
-            VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
-                Label("Вставьте адаптер в диагностический разъём", systemImage: "powerplug")
-                Label("Включите зажигание", systemImage: "key")
-            }
-            .font(.body)
-            .foregroundStyle(palette.text)
+            GaugeHeading(title: "Подключите автомобиль", subtitle: "Понадобится Bluetooth-адаптер OBD-II.")
 
-            Button(action: showAdapter) {
-                Label("Найти адаптер", systemImage: "dot.radiowaves.left.and.right")
-                    .frame(maxWidth: .infinity, minHeight: 36)
+            OBDConnectorDiagram()
+                .frame(height: typeSize.isAccessibilitySize ? 74 : 120)
+
+            VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+                OnboardingStep(symbol: "arrow.down.to.line", title: "Вставьте адаптер", detail: "В диагностический разъём автомобиля.")
+                GaugeRule()
+                OnboardingStep(symbol: "key", title: "Включите зажигание", detail: "Затем выберите адаптер из списка.")
             }
-            .buttonStyle(GaugeActionStyle(emphasized: true))
-            .accessibilityIdentifier("find-adapter")
         }
-        .padding(.bottom, GaugeSpacing.section)
+        .padding(.top, GaugeSpacing.medium)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var waitingState: some View {
-        let failed = model.phase == .failed
-        let waiting = model.isRunning
-        return VStack(alignment: .leading, spacing: GaugeSpacing.large) {
-            if waiting {
-                ProgressView().tint(palette.accent)
-                    .accessibilityLabel("Подключаемся к адаптеру")
+    @ViewBuilder private func instruments(at now: Date) -> some View {
+        let coolant = model.coolant?.gaugeValue(at: now)
+        if model.phase == .parked {
+            parkedState
+        } else if model.phase == .failed || model.phase == .stopped || model.phase == .idle {
+            if !model.history.isEmpty {
+                TemperatureInstrument(value: nil, thresholds: model.thresholds, alert: model.level)
             }
-            GaugeHeading(title: failed ? "Проверьте подключение" : waiting ? "Ожидание первого замера" : "Готово к поездке",
-                         subtitle: failed ? connectionHelp : waiting
-                             ? "Обычно достаточно включить зажигание."
-                             : "Подключитесь, когда автомобиль будет готов.")
-            if !waiting && model.canRetryConnection {
-                retryButton
-                if failed && !isSimulation {
-                    Button("Выбрать другой адаптер", action: showAdapter)
-                        .buttonStyle(GaugeActionStyle())
+            connectionRecovery
+        } else if coolant == nil && model.history.isEmpty && model.phase != .streaming {
+            waitingState
+        } else {
+            VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+                TemperatureInstrument(value: coolant, thresholds: model.thresholds, alert: model.level)
+                    .padding(.vertical, typeSize.isAccessibilitySize ? GaugeSpacing.xsmall : GaugeSpacing.medium)
+                if model.phase == .retrying || model.phase == .connecting {
+                    Label("Ждём ответ автомобиля", systemImage: "clock")
+                        .font(.subheadline)
+                        .foregroundStyle(palette.muted)
+                } else {
+                    GaugeRule()
+                    metrics(at: now)
                 }
             }
         }
-        .padding(.vertical, GaugeSpacing.section)
+    }
+
+    private var waitingState: some View {
+        VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+            ProgressView().tint(palette.accent)
+                .accessibilityLabel("Подключаемся к адаптеру")
+            GaugeHeading(title: "Ожидание первого замера",
+                         subtitle: "Оставьте зажигание включённым. Показания появятся, когда автомобиль ответит.")
+        }
+        .padding(.vertical, GaugeSpacing.large)
+    }
+
+    private var connectionRecovery: some View {
+        let failed = model.phase == .failed
+        return VStack(alignment: .leading, spacing: GaugeSpacing.large) {
+            GaugeHeading(title: failed ? "Проверьте подключение" :
+                            model.phase == .stopped ? "Измерения остановлены" : "Готово к поездке",
+                         subtitle: failed ? connectionHelp : "Подключитесь, когда автомобиль будет готов.")
+            if failed && !isSimulation {
+                Button("Выбрать другой адаптер", action: showAdapter)
+                    .buttonStyle(GaugeActionStyle())
+            }
+        }
+        .padding(.vertical, GaugeSpacing.small)
     }
 
     private var connectionHelp: String {
         switch model.ble.diagnosticDetail {
         case .poweredOff: "Включите Bluetooth на iPhone и повторите подключение."
         case .unauthorized: "Разрешите CarGauge доступ к Bluetooth в настройках iPhone."
-        case .unsupportedProfile: "CarGauge не нашёл канал связи с адаптером. Проверьте, что это BLE-модель."
+        case .unsupportedProfile: "Проверьте, что ваш OBD-II адаптер поддерживает Bluetooth LE."
         default: "Убедитесь, что адаптер получает питание и зажигание включено."
         }
     }
 
     private var parkedState: some View {
-        VStack(alignment: .leading, spacing: GaugeSpacing.large) {
-            GaugeHeading(title: "Двигатель не работает",
-                         subtitle: "Измерения приостановлены. Температура за поездку доступна на графике.")
-            Button {
-                model.start()
-            } label: {
-                Text("Возобновить измерения").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(GaugeActionStyle())
-            .accessibilityIdentifier("resume-measurements")
-        }
-        .padding(.vertical, GaugeSpacing.section)
+        GaugeHeading(title: "Двигатель не работает", subtitle: "Измерения приостановлены.")
+            .padding(.vertical, GaugeSpacing.large)
     }
 
-    private var retryButton: some View {
-        Button {
-            model.start(preservingHistory: true)
-        } label: {
-            Text("Повторить подключение").frame(maxWidth: .infinity)
+    private func primaryAction(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: GaugeSpacing.medium) {
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Image(systemName: symbol).accessibilityHidden(true)
+            }
+            .frame(minHeight: 36)
         }
         .buttonStyle(GaugeActionStyle(emphasized: true))
-        .accessibilityIdentifier("retry-connection")
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(id)
     }
 
     private var chartSection: some View {
-        VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
+        VStack(alignment: .leading, spacing: GaugeSpacing.small) {
             GaugeRule()
             Button(action: showHistory) {
                 HStack(spacing: GaugeSpacing.medium) {
                     VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-                        Text(typeSize.isAccessibilitySize ? "График" : "Температура в поездке")
+                        Text("График поездки")
                             .font(.headline)
-                        Text(typeSize.isAccessibilitySize ? "До 5 минут" : "Последние 5 минут")
-                            .font(.caption).foregroundStyle(palette.muted)
+                        Text(model.phase == .streaming ? "До 5 минут замеров" : "Последние полученные замеры")
+                            .font(.caption)
+                            .foregroundStyle(palette.muted)
                     }
                     Spacer(minLength: GaugeSpacing.small)
                     Image(systemName: "chevron.right")
@@ -191,13 +236,14 @@ struct DashboardView: View {
                         .foregroundStyle(palette.accent)
                         .accessibilityHidden(true)
                 }
-                .frame(minHeight: 44)
+                .frame(minHeight: 48)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("График температуры в поездке")
             .accessibilityHint("Открывает историю замеров")
             .accessibilityIdentifier("chart-preview")
+
             WarmupChart(points: model.history, thresholds: model.thresholds, compact: true,
                         alert: model.level, tripStartedAt: model.tripStartedAt)
                 .accessibilityIdentifier("warmup-plot")
@@ -216,17 +262,73 @@ struct DashboardView: View {
         return layout {
             GaugeMetric(title: "Обороты", value: rpmLabel, unit: "об/мин", spokenUnit: "оборотов в минуту",
                         id: "rpm-value")
-            if typeSize >= .xxLarge { GaugeRule() }
+            if typeSize >= .xxLarge {
+                GaugeRule()
+            } else {
+                Rectangle().fill(palette.line).frame(width: 1, height: 68).accessibilityHidden(true)
+            }
             GaugeMetric(title: "Напряжение", value: voltageLabel, unit: "В", spokenUnit: "вольт",
-                        detail: voltage == nil ? nil : model.supplementary?.voltageSource == .adapter ? "Оценка адаптера" : "Блок управления",
+                        detail: voltage == nil ? nil : model.supplementary?.voltageSource == .adapter ? "Оценка адаптера" : "От автомобиля",
                         id: "voltage-value")
         }
     }
 }
 
+private struct OBDConnectorDiagram: View {
+    @Environment(\.gaugePalette) private var palette
+
+    var body: some View {
+        Canvas { context, size in
+            let scale = min(size.height / 108, size.width / 280)
+            let center = size.width / 2
+            let top = (size.height - 96 * scale) / 2
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: center + x * scale, y: top + y * scale)
+            }
+
+            var housing = Path()
+            housing.move(to: point(-63, 13))
+            housing.addLine(to: point(63, 13))
+            housing.addLine(to: point(49, 63))
+            housing.addQuadCurve(to: point(41, 70), control: point(47, 70))
+            housing.addLine(to: point(-41, 70))
+            housing.addQuadCurve(to: point(-49, 63), control: point(-47, 70))
+            housing.closeSubpath()
+            context.fill(housing, with: .color(palette.panel))
+            context.stroke(housing, with: .color(palette.accent), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+
+            var cable = Path()
+            cable.move(to: point(-28, 70))
+            cable.addLine(to: point(-28, 83))
+            cable.addLine(to: point(28, 83))
+            cable.addLine(to: point(28, 70))
+            cable.move(to: point(0, 84))
+            cable.addLine(to: point(0, 96))
+            context.stroke(cable, with: .color(palette.accent), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+
+            for row in 0..<2 {
+                for column in 0..<8 {
+                    let pin = point(-37.5 + 10 * CGFloat(column), 29 + 16 * CGFloat(row))
+                    context.fill(Path(roundedRect: CGRect(origin: pin, size: CGSize(width: 5 * scale, height: 5 * scale)),
+                                      cornerRadius: scale), with: .color(palette.muted))
+                }
+            }
+
+            for side in [-1.0, 1.0] {
+                var guide = Path()
+                guide.move(to: point(CGFloat(side) * 73, 41))
+                guide.addLine(to: point(CGFloat(side) * 127, 41))
+                context.stroke(guide, with: .color(palette.line), lineWidth: 1)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 private struct GaugeMetric: View {
     @Environment(\.gaugePalette) private var palette
-    @ScaledMetric(relativeTo: .title) private var digitSize: CGFloat = 34
+    @ScaledMetric(relativeTo: .title) private var digitSize: CGFloat = 39
+
     let title: String
     let value: String?
     let unit: String
@@ -236,15 +338,17 @@ private struct GaugeMetric: View {
 
     var body: some View {
         let digits = Text(value ?? "—")
-            .font(.system(size: digitSize, weight: .semibold))
+            .font(.system(size: min(digitSize, 84), weight: .medium))
             .monospacedDigit()
-        let suffix = Text(unit).font(.caption.weight(.medium)).foregroundColor(palette.muted)
+            .tracking(-0.9)
+        let suffix = Text(unit).font(.caption.weight(.semibold)).foregroundStyle(palette.muted)
         let reading: LocalizedStringKey = value == nil ? "\(digits)" : "\(digits) \(suffix)"
+
         VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
-            Text(title).font(.subheadline.weight(.medium)).foregroundStyle(palette.muted)
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(palette.muted)
             Text(reading)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.65)
                 .accessibilityLabel(value.map { "\($0) \(spokenUnit)" } ?? "Нет данных")
                 .accessibilityIdentifier(id)
             if let detail {
@@ -255,19 +359,25 @@ private struct GaugeMetric: View {
     }
 }
 
-private struct PairingIllustration: View {
+private struct OnboardingStep: View {
     @Environment(\.gaugePalette) private var palette
 
+    let symbol: String
+    let title: String
+    let detail: String
+
     var body: some View {
-        HStack(spacing: 18) {
-            Image(systemName: "iphone")
-            Capsule().fill(palette.line).frame(width: 22, height: 1)
-            Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(palette.accent)
-            Capsule().fill(palette.line).frame(width: 22, height: 1)
-            Image(systemName: "car.side")
+        HStack(alignment: .top, spacing: GaugeSpacing.medium) {
+            Image(systemName: symbol)
+                .foregroundStyle(palette.accent)
+                .font(.body.weight(.medium))
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
+                Text(title).font(.headline)
+                Text(detail).font(.subheadline).foregroundStyle(palette.muted)
+            }
         }
-        .font(.system(size: 29, weight: .light))
-        .foregroundStyle(palette.muted)
-        .accessibilityHidden(true)
+        .accessibilityElement(children: .combine)
     }
 }

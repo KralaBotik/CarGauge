@@ -10,7 +10,7 @@ settings:
     CARGAUGE_BUNDLE_ID: com.cargauge.prototype
     CARGAUGE_APP_GROUP: group.$(CARGAUGE_BUNDLE_ID)
     MARKETING_VERSION: "0.6.0"
-    CURRENT_PROJECT_VERSION: "7"
+    CURRENT_PROJECT_VERSION: "8"
 packages:
   CarGaugePackage:
     path: .

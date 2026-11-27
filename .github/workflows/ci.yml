@@ -94,7 +94,7 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
       - name: Stage the validated IPA for release
-        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
+        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0' || github.ref == 'refs/heads/redesign/driver-interface'))) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: CarGauge-${{ matrix.flavor }}-candidate
@@ -109,7 +109,7 @@ jobs:
   publish-ipa:
     name: Publish Basic and Full IPA
     needs: ios
-    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0'))) }}
+    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0' || github.ref == 'refs/heads/redesign/driver-interface'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

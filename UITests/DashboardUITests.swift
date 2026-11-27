@@ -12,7 +12,9 @@ final class DashboardUITests: XCTestCase {
         XCTAssertEqual(find.label, "Найти адаптер")
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         XCTAssertFalse(app.staticTexts["rpm-value"].exists)
-        assertBottomNavigation(app)
+        let barTop = assertBottomNavigation(app)
+        XCTAssertGreaterThan(find.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(find.frame.maxY, barTop)
         snapshot(app, named: "01-Onboarding")
     }
 
@@ -26,6 +28,11 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.buttons["IOS-VLINK"].exists)
         let identifiers = (0..<named.count).compactMap { named.element(boundBy: $0).value as? String }
         XCTAssertEqual(Set(identifiers), ["ID · A481B001", "ID · A481B002"])
+        XCTAssertFalse(app.buttons["Устройство рядом"].exists)
+        let otherDevices = app.buttons["other-devices-disclosure"]
+        XCTAssertTrue(otherDevices.isHittable)
+        otherDevices.tap()
+        XCTAssertTrue(app.buttons["Устройство рядом"].exists)
         XCTAssertFalse(app.buttons["Устройство без имени"].exists)
         let extended = app.buttons["extended-discovery"]
         for _ in 0..<3 where !extended.isHittable { app.swipeUp() }
@@ -34,6 +41,56 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "02-Adapter-Discovery")
         app.buttons["close-adapter-setup"].tap()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
+    }
+
+    @MainActor func testEmptyDiscoveryAndTripHaveRecoveryStates() {
+        let app = launch(appearance: "light", options: ["--adapter-list-fixture", "--empty-adapter-list-fixture"])
+        app.buttons["find-adapter"].tap()
+        XCTAssertTrue(app.staticTexts["no-adapters-found"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.buttons["rescan-adapters"].isHittable)
+        XCTAssertTrue(app.buttons["extended-discovery"].isHittable)
+        snapshot(app, named: "20-Adapter-Empty")
+        app.buttons["close-adapter-setup"].tap()
+        app.buttons["history-nav"].tap()
+        XCTAssertTrue(app.staticTexts["Температура за сеанс"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["history-sample"].exists)
+        snapshot(app, named: "19-Empty-Trip")
+    }
+
+    @MainActor func testHistorySampleCanBeInspectedAndLeavesLiveReadingAlone() {
+        let app = launch(options: ["--connected-dashboard-fixture"])
+        app.buttons["history-nav"].tap()
+        let sample = app.staticTexts["history-sample"]
+        XCTAssertTrue(sample.waitForExistence(timeout: responseTimeout))
+        let latest = sample.label
+        let previous = app.buttons["history-previous-reading"]
+        XCTAssertTrue(previous.isHittable)
+        XCTAssertTrue(previous.isEnabled)
+        previous.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+        XCTAssertTrue(sample.waitForLabel(matching: "92 °C · 1:28", timeout: responseTimeout))
+        snapshot(app, named: "18-History-Selection")
+        let next = app.buttons["history-next-reading"]
+        XCTAssertTrue(next.isEnabled)
+        next.tap()
+        XCTAssertTrue(sample.wait(for: \.label, toEqual: latest, timeout: responseTimeout))
+        app.buttons["instruments-nav"].tap()
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForLabel(matching: "92 градусов Цельсия", timeout: responseTimeout))
+    }
+
+    @MainActor func testScrubbingAcrossHistoryGapDoesNotInventATemperature() {
+        let app = launch(options: ["--connected-dashboard-fixture"])
+        app.buttons["history-nav"].tap()
+        let plot = app.descendants(matching: .any)["history-plot"].firstMatch
+        XCTAssertTrue(plot.waitForExistence(timeout: responseTimeout))
+        // The fixture suspends samples from 0:28 to 0:48 on the 1:32 time axis.
+        let start = plot.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.5))
+        let gap = plot.coordinate(withNormalizedOffset: CGVector(dx: 0.40, dy: 0.5))
+        start.press(forDuration: 0.08, thenDragTo: gap)
+        XCTAssertTrue(app.staticTexts["history-gap"].waitForExistence(timeout: responseTimeout))
+        XCTAssertFalse(app.staticTexts["history-sample"].exists)
+        snapshot(app, named: "22-History-Gap")
+        plot.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["history-sample"].waitForExistence(timeout: responseTimeout))
     }
 
     @MainActor func testWaitingForFirstReadingDoesNotShowEmptyInstruments() {
@@ -103,6 +160,7 @@ final class DashboardUITests: XCTestCase {
         if !stepper.isHittable { app.swipeDown() }
         stepper.buttons.element(boundBy: 1).tap()
         XCTAssertTrue(stepper.waitForTemperature(106, timeout: responseTimeout))
+        snapshot(app, named: "21-Thermal-Settings")
         for _ in 0..<3 where !reset.isHittable { app.swipeUp() }
         reset.tap()
         XCTAssertTrue(stepper.waitForTemperature(105, timeout: responseTimeout))
@@ -122,6 +180,10 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(temperature.wait(for: \.label, toEqual: "Нет свежих данных", timeout: responseTimeout))
         let retry = app.buttons["retry-connection"]
         XCTAssertTrue(retry.waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertGreaterThan(retry.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(retry.frame.maxY, app.buttons["settings-nav"].frame.minY)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         snapshot(app, named: "10-Lost-Connection")
     }
 
@@ -169,7 +231,11 @@ final class DashboardUITests: XCTestCase {
             XCTFail("The engine-off scenario did not reach its parked state.")
             return
         }
-        XCTAssertTrue(app.buttons["resume-measurements"].exists)
+        let resume = app.buttons["resume-measurements"]
+        XCTAssertTrue(resume.isHittable)
+        XCTAssertGreaterThan(resume.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(resume.frame.maxY, app.buttons["settings-nav"].frame.minY)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         snapshot(app, named: "11-Parked")
     }
@@ -314,4 +380,5 @@ private extension XCUIElement {
         let expectation = XCTNSPredicateExpectation(predicate: predicate, object: self)
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
+
 }
