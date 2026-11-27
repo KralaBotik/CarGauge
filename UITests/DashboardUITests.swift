@@ -104,7 +104,7 @@ final class DashboardUITests: XCTestCase {
         for _ in 0..<4 where !start.isHittable { app.swipeUp() }
         XCTAssertTrue(start.isHittable)
         start.tap()
-        let confirm = app.buttons["Начать чтение"]
+        let confirm = app.buttons.matching(identifier: "survey-confirm").firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: responseTimeout))
         confirm.tap()
         let status = app.staticTexts["survey-state"]
@@ -114,9 +114,10 @@ final class DashboardUITests: XCTestCase {
         for _ in 0..<6 where !export.isHittable { app.swipeUp() }
         XCTAssertTrue(export.isHittable)
         export.tap()
-        XCTAssertTrue(app.buttons["Отчёт JSON"].exists)
-        XCTAssertTrue(app.buttons["Измерения CSV"].exists)
-        XCTAssertTrue(app.buttons["Текстовая сводка"].exists)
+        for title in ["Отчёт JSON", "Измерения CSV", "Текстовая сводка"] {
+            let format = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+            XCTAssertTrue(format.waitForExistence(timeout: responseTimeout), title)
+        }
     }
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {
