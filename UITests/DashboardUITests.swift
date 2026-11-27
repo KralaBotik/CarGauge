@@ -65,8 +65,9 @@ final class DashboardUITests: XCTestCase {
         let latest = sample.label
         let previous = app.buttons["history-previous-reading"]
         XCTAssertTrue(previous.isHittable)
-        previous.tap()
-        XCTAssertTrue(sample.waitForDifferentLabel(from: latest, timeout: responseTimeout))
+        XCTAssertTrue(previous.isEnabled)
+        previous.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap()
+        XCTAssertTrue(sample.waitForLabel(matching: "92 °C · 1:28", timeout: responseTimeout))
         snapshot(app, named: "18-History-Selection")
         let next = app.buttons["history-next-reading"]
         XCTAssertTrue(next.isEnabled)
@@ -380,7 +381,4 @@ private extension XCUIElement {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
-    @MainActor func waitForDifferentLabel(from label: String, timeout: TimeInterval) -> Bool {
-        wait(for: NSPredicate(format: "exists == YES AND label != %@", label), timeout: timeout)
-    }
 }

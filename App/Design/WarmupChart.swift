@@ -101,6 +101,7 @@ struct WarmupChart: View {
         } label: {
             Label(title, systemImage: icon)
                 .frame(maxWidth: .infinity, minHeight: 28)
+                .contentShape(Rectangle())
         }
         .buttonStyle(GaugeActionStyle())
         .disabled(point == nil)
