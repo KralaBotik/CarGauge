@@ -182,6 +182,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(retry.isHittable)
         XCTAssertGreaterThan(retry.frame.minY, app.frame.height * 0.65)
         XCTAssertLessThanOrEqual(retry.frame.maxY, app.buttons["settings-nav"].frame.minY)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         snapshot(app, named: "10-Lost-Connection")
     }
 
@@ -233,6 +234,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(resume.isHittable)
         XCTAssertGreaterThan(resume.frame.minY, app.frame.height * 0.65)
         XCTAssertLessThanOrEqual(resume.frame.maxY, app.buttons["settings-nav"].frame.minY)
+        XCTAssertTrue(app.staticTexts["source-indicator"].exists)
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         snapshot(app, named: "11-Parked")
     }

@@ -180,7 +180,7 @@ struct GaugeSettingsView: View {
                 }
                 if model.canRetryConnection {
                     GaugeRule()
-                    actionRow("Забыть адаптер", symbol: "link.badge.minus", id: "forget-adapter",
+                    actionRow("Забыть адаптер", symbol: "trash", id: "forget-adapter",
                               role: .destructive) { confirmsReset = true }
                 }
             }

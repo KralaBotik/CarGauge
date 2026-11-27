@@ -35,8 +35,8 @@ struct TemperatureInstrument: View {
                     .accessibilityIdentifier(status.id)
             }
 
-            if let value, !typeSize.isAccessibilitySize {
-                TemperatureTrack(value: value, thresholds: thresholds, tone: status.tone)
+            if let value, let state, !typeSize.isAccessibilitySize {
+                TemperatureTrack(value: value, thresholds: thresholds, state: state)
                     .padding(.top, GaugeSpacing.xsmall)
             }
         }
@@ -96,7 +96,7 @@ private struct TemperatureTrack: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let value: Double
     let thresholds: ThermalThresholds
-    let tone: Color
+    let state: EngineTemperatureState
 
     private var lower: Double { Double(thresholds.operating - 25) }
     private var upper: Double { Double(thresholds.critical + 12) }
@@ -122,10 +122,11 @@ private struct TemperatureTrack: View {
 
                     if (lower...upper).contains(value) {
                         RoundedRectangle(cornerRadius: 2)
-                            .fill(tone)
+                            .fill(palette.tone(for: state))
                             .frame(width: 7, height: 12)
                             .position(x: marker, y: 6)
                             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: marker)
+                            .id(state.rawValue)
                     }
                 }
             }
