@@ -65,7 +65,7 @@ jobs:
         if: ${{ inputs.master_id }}
         env:
           SOURCE_SHA: ${{ inputs.master_sha }}
-        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        run: test "$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Test Swift core
         shell: bash
         run: |
@@ -182,7 +182,7 @@ jobs:
         if: ${{ inputs.master_id }}
         env:
           SOURCE_SHA: ${{ inputs.master_sha }}
-        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        run: test "$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Install XcodeGen
         run: |
           if ! command -v xcodegen >/dev/null; then
