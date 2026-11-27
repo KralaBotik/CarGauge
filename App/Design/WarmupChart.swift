@@ -8,7 +8,6 @@ struct WarmupChart: View {
     @ScaledMetric(relativeTo: .caption) private var previewHeight: CGFloat = 164
     @ScaledMetric(relativeTo: .caption) private var historyHeight: CGFloat = 224
     @State private var selection: Selection = .latest
-    @State private var scrubTime: Double?
     @State private var selectionFeedback = 0
 
     let points: [WarmupHistory.Point]
@@ -47,9 +46,8 @@ struct WarmupChart: View {
 
         return VStack(alignment: .leading, spacing: GaugeSpacing.medium) {
             plot(window, cursor: cursor, sample: sample)
-                .chartXSelection(value: $scrubTime)
-                .onChange(of: scrubTime) { _, time in
-                    if let time { select(at: time, in: window) }
+                .chartOverlay { proxy in
+                    historyGestures(proxy, window: window)
                 }
                 .accessibilityIdentifier("history-plot")
 
@@ -88,6 +86,34 @@ struct WarmupChart: View {
                 selection = .latest
             default:
                 break
+            }
+        }
+    }
+
+    private func historyGestures(_ proxy: ChartProxy, window: ChartWindow) -> some View {
+        GeometryReader { geometry in
+            if let frame = proxy.plotFrame {
+                let bounds = geometry[frame]
+                let selectLocation: (CGPoint) -> Void = { location in
+                    if bounds.contains(location),
+                       let time = proxy.value(atX: location.x - bounds.minX, as: Double.self) {
+                        select(at: time, in: window)
+                    }
+                }
+                let selectDrag: (DragGesture.Value) -> Void = { drag in
+                    if abs(drag.translation.width) >= abs(drag.translation.height) {
+                        selectLocation(drag.location)
+                    }
+                }
+
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(SpatialTapGesture().onEnded { selectLocation($0.location) })
+                    .simultaneousGesture(DragGesture(minimumDistance: 6)
+                        .onChanged(selectDrag)
+                        .onEnded(selectDrag))
+                    .accessibilityHidden(true)
             }
         }
     }

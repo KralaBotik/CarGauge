@@ -89,7 +89,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["history-gap"].waitForExistence(timeout: responseTimeout))
         XCTAssertFalse(app.staticTexts["history-sample"].exists)
         snapshot(app, named: "22-History-Gap")
-        app.buttons["history-previous-reading"].tap()
+        plot.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
         XCTAssertTrue(app.staticTexts["history-sample"].waitForExistence(timeout: responseTimeout))
     }
 
