@@ -22,6 +22,7 @@ enum GaugeMainSection: String, CaseIterable {
 
 struct GaugeNavigationBar: View {
     @Environment(\.gaugePalette) private var palette
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var selectionFeedback = 0
     let selection: GaugeMainSection
     let select: (GaugeMainSection) -> Void
@@ -53,11 +54,11 @@ struct GaugeNavigationBar: View {
             VStack(spacing: 3) {
                 Image(systemName: section.symbol)
                     .font(.body.weight(selected ? .semibold : .regular))
-                ViewThatFits(in: .horizontal) {
+                if typeSize <= .accessibility2 {
                     Text(section.title)
                         .font(.caption2.weight(.semibold))
-                        .fixedSize(horizontal: true, vertical: false)
-                    Color.clear.frame(width: 0, height: 0)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
             }
             .padding(.vertical, 8)

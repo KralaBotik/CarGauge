@@ -28,8 +28,8 @@ struct DashboardView: View {
         }
         .accessibilityIdentifier("instruments-screen")
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if needsAdapter {
-                primaryAction("Найти адаптер", symbol: "arrow.right", id: "find-adapter", action: showAdapter)
+            if let action = bottomAction {
+                primaryAction(action.title, symbol: action.symbol, id: action.id, action: action.perform)
                     .frame(maxWidth: 516)
                     .padding(.horizontal, GaugeSpacing.page)
                     .padding(.vertical, GaugeSpacing.medium)
@@ -49,6 +49,27 @@ struct DashboardView: View {
 
     private var needsAdapter: Bool {
         !model.hasConfiguredAdapter && !model.canRetryConnection && !model.isRunning && !isSimulation
+    }
+
+    private var bottomAction: (title: String, symbol: String, id: String, perform: () -> Void)? {
+        if needsAdapter {
+            return ("Найти адаптер", "arrow.right", "find-adapter", showAdapter)
+        }
+        if model.phase == .parked {
+            return ("Возобновить измерения", "arrow.right", "resume-measurements", { model.start() })
+        }
+        let failed = model.phase == .failed
+        guard failed || model.phase == .stopped || model.phase == .idle else { return nil }
+        if failed && model.ble.diagnosticDetail == .unauthorized {
+            return ("Открыть настройки iPhone", "arrow.up.right", "open-bluetooth-settings", {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            })
+        }
+        guard model.canRetryConnection else { return nil }
+        return (failed ? "Повторить подключение" : "Подключиться",
+                failed ? "arrow.clockwise" : "arrow.right", "retry-connection", {
+                    model.start(preservingHistory: true)
+                })
     }
 
     private var dashboardHeader: some View {
@@ -161,16 +182,6 @@ struct DashboardView: View {
             GaugeHeading(title: failed ? "Проверьте подключение" :
                             model.phase == .stopped ? "Измерения остановлены" : "Готово к поездке",
                          subtitle: failed ? connectionHelp : "Подключитесь, когда автомобиль будет готов.")
-            if failed && model.ble.diagnosticDetail == .unauthorized {
-                primaryAction("Открыть настройки iPhone", symbol: "arrow.up.right", id: "open-bluetooth-settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-                }
-            } else if model.canRetryConnection {
-                primaryAction(failed ? "Повторить подключение" : "Подключиться",
-                              symbol: failed ? "arrow.clockwise" : "arrow.right", id: "retry-connection") {
-                    model.start(preservingHistory: true)
-                }
-            }
             if failed && !isSimulation {
                 Button("Выбрать другой адаптер", action: showAdapter)
                     .buttonStyle(GaugeActionStyle())
@@ -189,13 +200,8 @@ struct DashboardView: View {
     }
 
     private var parkedState: some View {
-        VStack(alignment: .leading, spacing: GaugeSpacing.large) {
-            GaugeHeading(title: "Двигатель не работает", subtitle: "Измерения приостановлены.")
-            primaryAction("Возобновить измерения", symbol: "arrow.right", id: "resume-measurements") {
-                model.start()
-            }
-        }
-        .padding(.vertical, GaugeSpacing.large)
+        GaugeHeading(title: "Двигатель не работает", subtitle: "Измерения приостановлены.")
+            .padding(.vertical, GaugeSpacing.large)
     }
 
     private func primaryAction(_ title: String, symbol: String, id: String, action: @escaping () -> Void) -> some View {

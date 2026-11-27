@@ -179,6 +179,9 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(temperature.wait(for: \.label, toEqual: "Нет свежих данных", timeout: responseTimeout))
         let retry = app.buttons["retry-connection"]
         XCTAssertTrue(retry.waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertGreaterThan(retry.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(retry.frame.maxY, app.buttons["settings-nav"].frame.minY)
         snapshot(app, named: "10-Lost-Connection")
     }
 
@@ -226,7 +229,10 @@ final class DashboardUITests: XCTestCase {
             XCTFail("The engine-off scenario did not reach its parked state.")
             return
         }
-        XCTAssertTrue(app.buttons["resume-measurements"].exists)
+        let resume = app.buttons["resume-measurements"]
+        XCTAssertTrue(resume.isHittable)
+        XCTAssertGreaterThan(resume.frame.minY, app.frame.height * 0.65)
+        XCTAssertLessThanOrEqual(resume.frame.maxY, app.buttons["settings-nav"].frame.minY)
         XCTAssertFalse(app.staticTexts["coolant-value"].exists)
         snapshot(app, named: "11-Parked")
     }
