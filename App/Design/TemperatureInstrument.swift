@@ -37,6 +37,7 @@ struct TemperatureInstrument: View {
 
             if let value, let state, !typeSize.isAccessibilitySize {
                 TemperatureTrack(value: value, thresholds: thresholds, state: state)
+                    .id(status.title)
                     .padding(.top, GaugeSpacing.xsmall)
             }
         }
@@ -126,7 +127,6 @@ private struct TemperatureTrack: View {
                             .frame(width: 7, height: 12)
                             .position(x: marker, y: 6)
                             .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: marker)
-                            .id(state.rawValue)
                     }
                 }
             }
