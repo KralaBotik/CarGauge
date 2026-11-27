@@ -22,24 +22,24 @@ enum GaugeMainSection: String, CaseIterable {
 
 struct GaugeNavigationBar: View {
     @Environment(\.gaugePalette) private var palette
-    @Environment(\.dynamicTypeSize) private var typeSize
+    @State private var selectionFeedback = 0
     let selection: GaugeMainSection
     let select: (GaugeMainSection) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             GaugeRule()
-            HStack(spacing: GaugeSpacing.xsmall) {
+            HStack(spacing: GaugeSpacing.small) {
                 ForEach(GaugeMainSection.allCases, id: \.self) { section in
                     sectionButton(section)
                 }
             }
-            .padding(.horizontal, GaugeSpacing.medium)
-            .padding(.vertical, GaugeSpacing.xsmall)
+            .padding(.horizontal, GaugeSpacing.large)
             .frame(maxWidth: 560)
             .frame(maxWidth: .infinity)
         }
         .background(palette.canvas, ignoresSafeAreaEdges: .bottom)
+        .sensoryFeedback(.selection, trigger: selectionFeedback)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Основная навигация")
     }
@@ -47,29 +47,31 @@ struct GaugeNavigationBar: View {
     private func sectionButton(_ section: GaugeMainSection) -> some View {
         let selected = section == selection
         return Button {
+            if !selected { selectionFeedback += 1 }
             select(section)
         } label: {
-            Group {
-                if typeSize.isAccessibilitySize {
-                    ViewThatFits(in: .horizontal) {
-                        Text(section.title).font(.caption2.weight(.semibold))
-                            .fixedSize(horizontal: true, vertical: false)
-                        Image(systemName: section.symbol).font(.caption.weight(.semibold))
-                    }
-                } else {
-                    ViewThatFits(in: .horizontal) {
-                        Label(section.title, systemImage: section.symbol)
-                            .fixedSize(horizontal: true, vertical: false)
-                        Text(section.title).fixedSize(horizontal: true, vertical: false)
-                        Image(systemName: section.symbol)
-                    }
-                    .font(.caption.weight(.semibold))
+            VStack(spacing: 3) {
+                Image(systemName: section.symbol)
+                    .font(.body.weight(selected ? .semibold : .regular))
+                ViewThatFits(in: .horizontal) {
+                    Text(section.title)
+                        .font(.caption2.weight(.semibold))
+                        .fixedSize(horizontal: true, vertical: false)
+                    Color.clear.frame(width: 0, height: 0)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 46)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 53)
             .contentShape(Rectangle())
             .foregroundStyle(selected ? palette.accent : palette.muted)
-            .background(selected ? palette.panel : .clear, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(alignment: .top) {
+                if selected {
+                    Capsule()
+                        .fill(palette.accent)
+                        .frame(width: 25, height: 2)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(section.title)

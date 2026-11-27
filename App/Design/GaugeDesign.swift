@@ -33,18 +33,18 @@ enum GaugeSpacing {
 struct GaugePalette {
     let scheme: ColorScheme
 
-    var canvas: Color { pair(0x10171F, 0xF1F3F2) }
-    var panel: Color { pair(0x1A2730, 0xE1E8E6) }
-    var line: Color { pair(0x40545B, 0xB7C6C5) }
-    var text: Color { pair(0xF1F7F6, 0x132927) }
-    var muted: Color { pair(0xA7BEC3, 0x425957) }
-    var accent: Color { pair(0x77E2CC, 0x095E51) }
-    var trace: Color { accent }
-    var warming: Color { pair(0xA1CAF2, 0x315D79) }
-    var operating: Color { pair(0x88DEC0, 0x1C624E) }
-    var warning: Color { pair(0xFFD18A, 0x84500F) }
-    var critical: Color { pair(0xFFA497, 0x9D3029) }
-    var actionText: Color { pair(0x102720, 0xFFFFFF) }
+    var canvas: Color { pair(0x17191C, 0xF6F3ED) }
+    var panel: Color { pair(0x232529, 0xEEE8DE) }
+    var line: Color { pair(0x49494B, 0xC9C0B3) }
+    var text: Color { pair(0xF5F0E7, 0x23201D) }
+    var muted: Color { pair(0xBCB5AA, 0x5D554A) }
+    var accent: Color { pair(0xECC38D, 0x744A18) }
+    var trace: Color { pair(0xCFB48E, 0x895C2A) }
+    var warming: Color { pair(0xAEC9E4, 0x355B78) }
+    var operating: Color { pair(0xA4CBA9, 0x2A623C) }
+    var warning: Color { pair(0xF4BE79, 0x874A0D) }
+    var critical: Color { pair(0xFFA797, 0xA0352C) }
+    var actionText: Color { pair(0x241C14, 0xFFFFFF) }
 
     func tone(for state: EngineTemperatureState) -> Color {
         switch state {
@@ -113,7 +113,7 @@ struct GaugePage<Content: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: spacing) { content }
                 .padding(.horizontal, GaugeSpacing.page)
-                .padding(.vertical, GaugeSpacing.medium)
+                .padding(.vertical, GaugeSpacing.large)
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity)
         }
@@ -129,7 +129,7 @@ struct GaugeHeading: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: GaugeSpacing.small) {
-            Text(title).font(.largeTitle.weight(.semibold)).tracking(-0.6).accessibilityAddTraits(.isHeader)
+            Text(title).font(.largeTitle.weight(.semibold)).tracking(-1).accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle).font(.body).foregroundStyle(palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -183,7 +183,7 @@ struct GaugeActionStyle: ButtonStyle {
             .padding(.vertical, GaugeSpacing.small)
             .frame(minWidth: 44, minHeight: 44)
             .foregroundStyle(!isEnabled ? palette.muted : solid ? palette.actionText : palette.text)
-            .background(solid ? palette.accent : palette.panel, in: RoundedRectangle(cornerRadius: 10))
+            .background(solid ? palette.accent : palette.panel, in: RoundedRectangle(cornerRadius: 8))
             .opacity(configuration.isPressed ? 0.72 : 1)
     }
 }
