@@ -165,8 +165,7 @@ struct DashboardView: View {
                 primaryAction("Открыть настройки iPhone", symbol: "arrow.up.right", id: "open-bluetooth-settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                 }
-            }
-            if model.canRetryConnection {
+            } else if model.canRetryConnection {
                 primaryAction("Повторить подключение", symbol: "arrow.clockwise", id: "retry-connection") {
                     model.start(preservingHistory: true)
                 }

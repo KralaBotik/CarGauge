@@ -6,7 +6,6 @@ struct TemperatureInstrument: View {
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .largeTitle) private var displaySize: CGFloat = 112
-    @ScaledMetric(relativeTo: .title) private var accessibilityDisplaySize: CGFloat = 58
 
     let value: Double?
     let thresholds: ThermalThresholds
@@ -45,7 +44,7 @@ struct TemperatureInstrument: View {
     }
 
     private func digits(_ number: Int) -> some View {
-        let size = typeSize >= .xxLarge ? min(accessibilityDisplaySize, 132) : min(displaySize, 134)
+        let size = min(displaySize, 134)
         let amount = Text(number, format: .number.grouping(.never))
             .font(.system(size: size, weight: .medium))
             .monospacedDigit()
@@ -121,17 +120,23 @@ private struct TemperatureTrack: View {
                         }
                     }
 
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(tone)
-                        .frame(width: 7, height: 12)
-                        .position(x: marker, y: 6)
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: marker)
+                    if (lower...upper).contains(value) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(tone)
+                            .frame(width: 7, height: 12)
+                            .position(x: marker, y: 6)
+                            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: marker)
+                    }
                 }
             }
             .frame(height: 12)
             HStack {
                 Text("\(Int(lower))°")
                 Spacer()
+                if value < lower || value > upper {
+                    Text(value < lower ? "Ниже шкалы" : "Выше шкалы")
+                    Spacer()
+                }
                 Text("\(Int(upper))°")
             }
             .font(.caption.monospacedDigit())
