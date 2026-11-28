@@ -48,9 +48,9 @@ private enum G4FCMonitoringRules {
 
     private static func roll(_ signal: DriveSignal, _ aggregate: MonitoringAggregate, _ duration: Double,
                              count: Int, span: Double, gap: Double, age: Double,
-                             closedLoopOnly: Bool = false) -> MonitoringMetric {
+                             closedLoopOnly: Bool = false, scope: MonitoringWindow.Scope = .regime) -> MonitoringMetric {
         .aggregate(.init(signal, aggregate, duration: duration, minimumSamples: count,
-                         minimumSpan: span, maximumGap: gap, maximumAge: age, closedLoopOnly: closedLoopOnly))
+                         minimumSpan: span, maximumGap: gap, maximumAge: age, closedLoopOnly: closedLoopOnly, scope: scope))
     }
 
     private static func temperatureLimit(_ id: String, title: String, limit: MonitoringThermalLimit,
@@ -86,10 +86,10 @@ private enum G4FCMonitoringRules {
     }
 
     private static func coolantAfterWarmup(dropping: Bool) -> MonitoringRule {
-        let maximum = roll(.coolant, .maximum, 120, count: 12, span: 60, gap: 6, age: 5)
+        let maximum = roll(.coolant, .maximum, 120, count: 12, span: 60, gap: 6, age: 5, scope: .continuousRun)
         let change = dropping
             ? MonitoringMetric.difference(maximum, sample(.coolant, 5))
-            : roll(.coolant, .spread, 120, count: 12, span: 60, gap: 6, age: 5)
+            : roll(.coolant, .spread, 120, count: 12, span: 60, gap: 6, age: 5, scope: .continuousRun)
         return MonitoringRule(id: dropping ? "coolant.drop" : "coolant.variation", version: 1,
                               title: dropping ? "Снижение температуры после прогрева" : "Размах температуры после прогрева",
                               severity: .info, origin: .experimental, sourceURL: gsw,

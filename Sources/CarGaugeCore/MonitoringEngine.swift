@@ -6,23 +6,26 @@ public struct MonitoringEngine: Sendable {
         let kind: Kind
         let since: Double
         var latestEvidence: Double
+        var latestEvidenceExpiry: Double?
     }
 
     private struct RuleRuntime: Sendable {
         var dwell: Dwell?
         var continuousIssueSince: Double?
 
-        mutating func advance(_ kind: Dwell.Kind, minimum: Double, time: Double, stamp: Double?) -> Bool {
-            guard let stamp, minimum.isFinite, minimum >= 0 else {
+        mutating func advance(_ kind: Dwell.Kind, minimum: Double, time: Double, truth: MonitoringTruth) -> Bool {
+            guard let stamp = truth.stamp, minimum.isFinite, minimum >= 0 else {
                 dwell = nil
                 return false
             }
-            guard let current = dwell, current.kind == kind else {
-                dwell = Dwell(kind: kind, since: time, latestEvidence: stamp)
+            guard let current = dwell, current.kind == kind,
+                  current.latestEvidenceExpiry.map({ stamp <= $0 }) ?? true else {
+                dwell = Dwell(kind: kind, since: time, latestEvidence: stamp, latestEvidenceExpiry: truth.validUntil)
                 return minimum == 0
             }
             guard stamp > current.latestEvidence else { return false }
             dwell?.latestEvidence = stamp
+            dwell?.latestEvidenceExpiry = truth.validUntil
             return stamp - current.since >= minimum
         }
     }
@@ -158,12 +161,13 @@ public struct MonitoringEngine: Sendable {
             }, uniquingKeysWith: { _, later in later })
         }
 
+        let relatedDTCs = Self.related(rule, frame: evaluator.frame)
         let applicable = evaluator.truth(rule.applicableWhen)
         let context = rule.context.compactMap(evaluator.value).flatMap(\.evidence)
         guard isEnabled(rule), applicable.value == true else {
             runtime[key] = nil
             let status: MonitoringState = isEnabled(rule) && applicable.value == nil ? .insufficientData : .notApplicable
-            return (result(rule, state: status, evidence: applicable.evidence + context), nil)
+            return (result(rule, state: status, evidence: applicable.evidence + context, relatedDTCs: relatedDTCs), nil)
         }
 
         defer { runtime[key] = state }
@@ -174,42 +178,42 @@ public struct MonitoringEngine: Sendable {
             let evidence = applicable.evidence + recovery.evidence + context
             guard recovery.value != nil, trigger.value != nil else {
                 state = RuleRuntime()
-                return (result(rule, state: .insufficientData, evidence: evidence), nil)
+                return (result(rule, state: .insufficientData, evidence: evidence, relatedDTCs: relatedDTCs), nil)
             }
             if recovery.value == true {
-                let stamp = [applicable.stamp, recovery.stamp].compactMap { $0 }.min()
-                if state.advance(.recovery, minimum: rule.minimumRecovery, time: frame.monotonic, stamp: stamp) {
+                let truth = MonitoringTruth.combining([applicable, recovery], all: true)
+                if state.advance(.recovery, minimum: rule.minimumRecovery, time: frame.monotonic, truth: truth) {
                     open[key] = nil
                     let duration = state.continuousIssueSince.map { frame.monotonic - $0 }
                     state = RuleRuntime()
                     let event = makeEvent(rule, using: evaluator, kind: .recovery, issueID: issue.issueID,
                                           correlationID: issue.correlationID, evidence: evidence,
                                           duration: duration, shouldNotify: false)
-                    return (result(rule, state: .recovered, evidence: evidence), event)
+                    return (result(rule, state: .recovered, evidence: evidence, relatedDTCs: relatedDTCs), event)
                 }
             } else {
                 state.dwell = nil
             }
-            return (result(rule, state: .problem, evidence: evidence), nil)
+            return (result(rule, state: .problem, evidence: evidence, relatedDTCs: relatedDTCs), nil)
         }
 
         let evidence = applicable.evidence + trigger.evidence + context
         guard let triggered = trigger.value else {
             state = RuleRuntime()
-            return (result(rule, state: .insufficientData, evidence: evidence), nil)
+            return (result(rule, state: .insufficientData, evidence: evidence, relatedDTCs: relatedDTCs), nil)
         }
         guard triggered else {
             state = RuleRuntime()
-            return (result(rule, state: rule.opensIssue ? .normal : .observing, evidence: evidence), nil)
+            return (result(rule, state: rule.opensIssue ? .normal : .observing, evidence: evidence, relatedDTCs: relatedDTCs), nil)
         }
 
-        let stamp = [applicable.stamp, trigger.stamp].compactMap { $0 }.min()
-        let matured = state.advance(.trigger, minimum: rule.minimumViolation, time: frame.monotonic, stamp: stamp)
+        let truth = MonitoringTruth.combining([applicable, trigger], all: true)
+        let matured = state.advance(.trigger, minimum: rule.minimumViolation, time: frame.monotonic, truth: truth)
         if !rule.opensIssue {
             // An experimental observation can display evidence but cannot enter the problem journal.
-            return (result(rule, state: matured ? .deviation : .observing, evidence: evidence), nil)
+            return (result(rule, state: matured ? .deviation : .observing, evidence: evidence, relatedDTCs: relatedDTCs), nil)
         }
-        guard matured else { return (result(rule, state: .deviation, evidence: evidence), nil) }
+        guard matured else { return (result(rule, state: .deviation, evidence: evidence, relatedDTCs: relatedDTCs), nil) }
 
         let group = open.values.filter { $0.correlationKey == rule.correlationKey }
             .min { $0.occurredAt < $1.occurredAt }?.correlationID ?? UUID()
@@ -218,13 +222,14 @@ public struct MonitoringEngine: Sendable {
                               correlationID: group, evidence: evidence, duration: nil, shouldNotify: notify)
         open[key] = event
         state = RuleRuntime(dwell: nil, continuousIssueSince: frame.monotonic)
-        return (result(rule, state: .problem, evidence: evidence), event)
+        return (result(rule, state: .problem, evidence: evidence, relatedDTCs: relatedDTCs), event)
     }
 
     private func result(_ rule: MonitoringRule, state: MonitoringState,
-                        evidence: [MonitoringEvidence]) -> MonitoringRuleResult {
+                        evidence: [MonitoringEvidence], relatedDTCs: [String] = []) -> MonitoringRuleResult {
         MonitoringRuleResult(ruleID: rule.id, ruleVersion: rule.version, state: state,
-                             issueID: open[rule.key]?.issueID, evidence: Self.unique(evidence), enabled: isEnabled(rule))
+                             issueID: open[rule.key]?.issueID, evidence: Self.unique(evidence), enabled: isEnabled(rule),
+                             relatedDTCs: relatedDTCs)
     }
 
     private mutating func wantsNotice(_ rule: MonitoringRule, at date: Date) -> Bool {
@@ -244,9 +249,12 @@ public struct MonitoringEngine: Sendable {
                                ruleVersion: rule.version, kind: kind, occurredAt: frame.timestamp,
                                tripID: frame.tripID, duration: duration, severity: rule.severity,
                                regime: evaluator.regime, evidence: Self.unique(evidence),
-                               relatedDTCs: Set(frame.activeDTCs.map { $0.uppercased() })
-                                    .intersection(rule.relevantDTCs).sorted(),
+                               relatedDTCs: Self.related(rule, frame: frame),
                                correlationKey: rule.correlationKey, shouldNotify: shouldNotify)
+    }
+
+    private static func related(_ rule: MonitoringRule, frame: MonitoringFrame) -> [String] {
+        Set(frame.activeDTCs.map { $0.uppercased() }).intersection(rule.relevantDTCs).sorted()
     }
 
     private static func unique(_ evidence: [MonitoringEvidence]) -> [MonitoringEvidence] {
@@ -282,7 +290,8 @@ public struct MonitoringEngine: Sendable {
             return
         }
         if run == nil {
-            run = MonitoringRunContext(observedSince: frame.monotonic, witnessed: frame.engineStartObserved,
+            let nearStart = current(.runTime, at: frame, age: 15).map { (0...15).contains($0) } ?? false
+            run = MonitoringRunContext(observedSince: frame.monotonic, witnessed: frame.engineStartObserved && nearStart,
                                        initialCoolant: current(.coolant, at: frame, age: 5),
                                        initialAmbient: current(.ambient, at: frame, age: 75))
         }

@@ -82,6 +82,8 @@ public enum MonitoringAggregate: String, Codable, Sendable {
 }
 
 public struct MonitoringWindow: Codable, Sendable {
+    public enum Scope: String, Codable, Sendable { case regime, continuousRun }
+
     public let signal: DriveSignal
     public let aggregate: MonitoringAggregate
     public let duration: Double
@@ -90,9 +92,11 @@ public struct MonitoringWindow: Codable, Sendable {
     public let maximumGap: Double
     public let maximumAge: Double
     public let closedLoopOnly: Bool
+    public let scope: Scope
 
     public init(_ signal: DriveSignal, _ aggregate: MonitoringAggregate, duration: Double, minimumSamples: Int,
-                minimumSpan: Double, maximumGap: Double, maximumAge: Double, closedLoopOnly: Bool = false) {
+                minimumSpan: Double, maximumGap: Double, maximumAge: Double, closedLoopOnly: Bool = false,
+                scope: Scope = .regime) {
         self.signal = signal
         self.aggregate = aggregate
         self.duration = duration
@@ -101,6 +105,7 @@ public struct MonitoringWindow: Codable, Sendable {
         self.maximumGap = maximumGap
         self.maximumAge = maximumAge
         self.closedLoopOnly = closedLoopOnly
+        self.scope = scope
     }
 }
 
@@ -274,6 +279,7 @@ public struct MonitoringRuleResult: Identifiable, Codable, Sendable {
     public let issueID: UUID?
     public let evidence: [MonitoringEvidence]
     public let enabled: Bool
+    public let relatedDTCs: [String]
 }
 
 public struct MonitoringUpdate: Sendable {
@@ -287,6 +293,7 @@ public struct MonitoringCheckpoint: Codable, Sendable {
     public let schemaVersion: Int
     public let openIssues: [MonitoringEvent]
     public let enabledOverrides: [String: Bool]
+    public var baselines: [MonitoringBaselineInfo] { baseline.storedInfo }
     let baseline: MonitoringBaseline
     let notices: [String: MonitoringNotice]
 }

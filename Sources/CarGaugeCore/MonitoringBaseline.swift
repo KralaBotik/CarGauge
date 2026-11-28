@@ -77,6 +77,10 @@ struct MonitoringBaseline: Codable, Sendable {
         }
     }
 
+    var storedInfo: [MonitoringBaselineInfo] {
+        buckets.keys.map(info).sorted { $0.id < $1.id }
+    }
+
     func allInfo(in bucket: MonitoringBucket?) -> [MonitoringBaselineInfo] {
         guard let bucket else { return [] }
         return Self.signals.sorted { $0.rawValue < $1.rawValue }.map { info(.init(signal: $0, bucket: bucket)) }
