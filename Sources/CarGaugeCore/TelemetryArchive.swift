@@ -265,14 +265,31 @@ public actor TelemetryArchive {
 
     public func calibration() throws -> FuelCalibrationState {
         let db = try database()
-        let factor = try db.scalar("SELECT SUM(litres)/NULLIF(SUM(base_litres),0) FROM fill") ?? 1
+        let epoch = try Self.calibrationEpoch(db)
+        let factor = try db.scalar("SELECT SUM(litres)/NULLIF(SUM(base_litres),0) FROM fill WHERE id>?", [.integer(epoch)]) ?? 1
         guard factor.isFinite, factor > 0 else { throw FuelCalibrationError.invalid }
-        let count = try db.scalar("SELECT COUNT(*) FROM fill") ?? 0
+        let count = try db.scalar("SELECT COUNT(*) FROM fill WHERE id>?", [.integer(epoch)]) ?? 0
         var start: (Double, Date)?
         try db.query("SELECT odometer,utc FROM fill_start WHERE id=1") { row in
             start = (sqlite3_column_double(row, 0), Date(timeIntervalSince1970: sqlite3_column_double(row, 1)))
         }
         return FuelCalibrationState(factor: factor, initialOdometer: start?.0, initialDate: start?.1, matchedFills: Int(count))
+    }
+
+    public func resetCalibration() throws -> FuelCalibrationState {
+        let db = try database()
+        guard active == nil, pendingEnd == nil else { throw FuelCalibrationError.activeEngine }
+        try db.transaction {
+            let lastID = Int64(try db.scalar("SELECT COALESCE(MAX(id),0) FROM fill") ?? 0)
+            try Self.saveLocalState(lastID, key: "fuel-calibration-epoch", in: db)
+            try db.run("DELETE FROM fill_start WHERE id=1", [])
+        }
+        return try calibration()
+    }
+
+    private static func calibrationEpoch(_ db: DriveSQL) throws -> Int64 {
+        try db.scalar("SELECT CAST(CAST(payload AS TEXT) AS INTEGER) FROM health_state WHERE key='fuel-calibration-epoch'")
+            .map(Int64.init) ?? 0
     }
 
     public func startCalibration(odometer: Double, at date: Date = .now) throws -> FuelCalibrationState {
@@ -346,8 +363,8 @@ public actor TelemetryArchive {
         guard officialKm.isFinite, officialKm > 0, litres.isFinite, litres > 0, date > start else {
             throw FuelCalibrationError.invalid
         }
-        let overlapping = try db.scalar("SELECT COUNT(*) FROM fill WHERE start_utc<? AND end_utc>?",
-                                        [.time(date), .time(start)]) ?? 0
+        let overlapping = try db.scalar("SELECT COUNT(*) FROM fill WHERE id>? AND start_utc<? AND end_utc>?",
+                                        [.integer(try calibrationEpoch(db)), .time(date), .time(start)]) ?? 0
         guard overlapping == 0 else { throw FuelCalibrationError.alreadyCalibrated }
         let invalid = try db.scalar("""
             SELECT COUNT(*) FROM trip t WHERE t.id>? AND t.id<=?

@@ -69,7 +69,8 @@ struct VehicleReportSheet: View {
         switch scope {
         case .trip(let id): id == nil ? "Последняя поездка" : "Выбранная поездка"
         case .problem: "Выбранная проблема"
-        case .survey: "Последнее обследование"
+        case .survey: "Последнее сохранённое обследование"
+        case .surveyRecord: "Выбранное обследование"
         case .diagnostics: "Диагностическая история"
         case .servicing: "Обслуживание"
         }

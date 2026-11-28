@@ -87,11 +87,15 @@ public struct DTCHistoryEntry: Codable, Sendable {
 extension TelemetryArchive {
     public func saveDiagnostic(_ report: DiagnosticReport, owner: UUID? = nil) throws {
         let db = try database()
-        var trip = currentTripID(owner: owner)
-        if trip == nil, let owner {
+        let trip: Int64?
+        if let owner {
+            let current = currentTripID(owner: owner) ?? -1
             trip = try db.scalar("""
-                SELECT id FROM trip WHERE owner=? AND started_utc<=? AND last_utc>=? ORDER BY id DESC LIMIT 1
-                """, [.text(owner.uuidString), .time(report.startedAt), .time(report.startedAt)]).map(Int64.init)
+                SELECT id FROM trip WHERE owner=? AND started_utc<=? AND (last_utc>=? OR id=?)
+                  ORDER BY started_utc DESC,id DESC LIMIT 1
+                """, [.text(owner.uuidString), .time(report.startedAt), .time(report.startedAt), .integer(current)]).map(Int64.init)
+        } else {
+            trip = nil
         }
         let link = trip.map(DriveSQL.Value.integer) ?? .null
         try db.transaction { try Self.storeDiagnostic(report, trip: link, db: db) }

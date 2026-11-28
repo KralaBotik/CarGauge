@@ -322,6 +322,7 @@ struct DriveCalibrationView: View {
     @State private var litres = ""
     @State private var message: String?
     @State private var confirmsRestart = false
+    @State private var confirmsReset = false
     @State private var confirmsCoverage = false
 
     var body: some View {
@@ -352,6 +353,10 @@ struct DriveCalibrationView: View {
                 if state?.initialOdometer != nil {
                     Button("Начать новый интервал") { confirmsRestart = true }.buttonStyle(GaugeActionStyle())
                 }
+                if let state, state.matchedFills > 0 {
+                    Button("Сбросить коэффициент", role: .destructive) { confirmsReset = true }
+                        .buttonStyle(GaugeActionStyle())
+                }
                 Text("Нужна запись почти всех поездок между заправками. Расчёт допускается при покрытии от 90% пробега и работы двигателя. Учитываются только законченные поездки. Ранее сохранённые значения сохраняют исходную калибровку.")
                     .font(.footnote).foregroundStyle(palette.muted)
                 if let message { Text(message).font(.footnote) }
@@ -361,10 +366,28 @@ struct DriveCalibrationView: View {
             do { state = try await drive.archive.calibration() }
             catch { message = error.localizedDescription }
         }
+        .confirmationDialog("Сбросить действующий коэффициент?", isPresented: $confirmsReset) {
+            Button("Сбросить", role: .destructive) { Task { await reset() } }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Будущие оценки вернутся к исходной модели. Журнал топлива и рассчитанные ранее значения сохранятся.")
+        }
         .confirmationDialog("Начать новый интервал?", isPresented: $confirmsRestart) {
             Button("Отметить полный бак") { Task { await save(restart: true) } }
             Button("Отмена", role: .cancel) {}
         }
+    }
+
+    private func reset() async {
+        do {
+            let changed = try await drive.archive.resetCalibration()
+            state = changed
+            drive.settingCalibration(changed)
+            message = "Будущие оценки используют исходный коэффициент."
+            odometer = ""
+            litres = ""
+            confirmsCoverage = false
+        } catch { message = error.localizedDescription }
     }
 
     private func save(restart: Bool) async {

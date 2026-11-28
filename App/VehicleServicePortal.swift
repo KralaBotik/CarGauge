@@ -81,7 +81,7 @@ import UserNotifications
         let now = Date.now
         let calendar = Calendar.current
         var future: [(Date, String, MaintenanceDue)] = []
-        var activeCalendarStage: [String: String] = [:]
+        var activeCalendarStages: [String: Set<String>] = [:]
         for item in due {
             guard let date = item.dueDate, item.exactCalendarDate else { continue }
             let day = calendar.startOfDay(for: date)
@@ -95,7 +95,7 @@ import UserNotifications
                     || (offset == 0 && (item.state == .due || item.state == .requiresInspection))
                     || (offset > 0 && (item.state == .overdue || item.state == .requiresInspection))
                 if matchingStage && (calendar.isDate(scheduled, inSameDayAs: now) || scheduled < now) {
-                    activeCalendarStage[item.id] = id
+                    activeCalendarStages[item.id, default: []].insert(id)
                 }
                 if scheduled > now { future.append((scheduled, id, item)) }
             }
@@ -119,8 +119,8 @@ import UserNotifications
         let deliveredIDs = Set(delivered.map { $0.request.identifier })
         for item in due.prefix(24) where item.state.canRemind {
             guard !refreshRequested else { return }
-            if let scheduledID = activeCalendarStage[item.id],
-               desired.contains(scheduledID) || deliveredIDs.contains(scheduledID) { continue }
+            if let scheduledIDs = activeCalendarStages[item.id],
+               !scheduledIDs.isDisjoint(with: desired) || !scheduledIDs.isDisjoint(with: deliveredIDs) { continue }
             let anchor = item.recordID?.uuidString ?? "rule"
             let id = "service-due-\(item.id)-\(anchor)-\(item.state.rawValue)"
             guard try await archive.reserveNotice(id, at: now) else { continue }

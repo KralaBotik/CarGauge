@@ -2,7 +2,7 @@ import CSQLite
 import Foundation
 
 public enum VehicleReportScope: Hashable, Sendable {
-    case trip(Int64?), problem(UUID), survey, diagnostics, servicing
+    case trip(Int64?), problem(UUID), survey, surveyRecord(UUID), diagnostics, servicing
 }
 
 public enum VehicleReportFormat: String, CaseIterable, Sendable {
@@ -236,6 +236,12 @@ extension TelemetryArchive {
         case .survey:
             sourceSurveys = try surveys(limit: 1, manualOnly: true)
             reportScope = "survey"
+        case .surveyRecord(let id):
+            guard let report = try recordedSurvey(id.uuidString), report.stationaryConfirmedByUser else {
+                throw DriveSQL.Failure(message: "Это обследование пока недоступно в локальном журнале.")
+            }
+            sourceSurveys = [report]
+            reportScope = "survey"
         case .diagnostics:
             sourceSurveys = try surveys()
             findings = try dtcFindings()
@@ -258,7 +264,7 @@ extension TelemetryArchive {
             timeline += try historyMarkers(trip: trip.id, includePrivate: includePrivate)
         }
         if format == .csv {
-            if scope == .survey, let survey = sourceSurveys.first { return Data(survey.csv().utf8) }
+            if reportScope == "survey", let survey = sourceSurveys.first { return Data(survey.csv().utf8) }
             if scope == .diagnostics || scope == .servicing {
                 throw DriveSQL.Failure(message: "CSV телеметрии доступен для поездки, проблемы или обследования.")
             }
@@ -285,7 +291,7 @@ extension TelemetryArchive {
             if let service {
                 lines.append("Записей обслуживания \(service.records.count) · заправок \(service.fills.count)")
             }
-            if let survey = sourceSurveys.first, scope == .survey {
+            if let survey = sourceSurveys.first, reportScope == "survey" {
                 let groups = survey.codes.flatMap { group in
                     group.replyGroups.map { "\(group.status.title) · \($0.joined(separator: ", "))" }
                 }

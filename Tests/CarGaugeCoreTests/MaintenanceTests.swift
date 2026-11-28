@@ -147,3 +147,16 @@ private func issue(_ ledger: MaintenanceLedger, current: MaintenanceCounters = .
     let cleared = MaintenanceDueEvaluator.statuses(ledger: ledger, current: .init(), now: day(2026, 7, 4), calendar: utc)
     #expect(cleared.first { $0.component.id == "front-discs" }?.state == .unknownHistory)
 }
+
+
+@Test func maintenanceExactCalendarRemainsSchedulableWhenMileageIsUnknown() throws {
+    var ledger = MaintenanceLedger()
+    try ledger.apply(.saveRule(.init(componentID: "engine-oil", operation: .replacement, months: 12, distanceKm: 10_000)))
+    try ledger.apply(.saveRecord(.init(date: .init(day(2026, 1, 1)),
+                                     odometer: .init(91_000, certainty: .approximate),
+                                     work: [work(.replacement)])))
+    let status = try #require(issue(ledger, now: day(2026, 5, 1)))
+    #expect(status.state == .unknownHistory)
+    #expect(status.exactCalendarDate)
+    #expect(status.dueDate == day(2027, 1, 1))
+}

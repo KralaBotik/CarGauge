@@ -145,6 +145,15 @@ final class DashboardUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["maintenance-odometer"].waitForExistence(timeout: responseTimeout))
         XCTAssertTrue(app.buttons["maintenance-add-odometer"].exists)
         snapshot(app, named: "18-Maintenance-Plan")
+        app.buttons["maintenance-add-odometer"].tap()
+        let odometer = app.textFields["maintenance-odometer-value"]
+        XCTAssertTrue(odometer.waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "26-Odometer-Editor")
+        odometer.tap()
+        odometer.typeText("123456")
+        app.buttons["maintenance-save-odometer"].tap()
+        XCTAssertTrue(app.buttons["maintenance-add-odometer"].waitForExistence(timeout: responseTimeout))
+
         app.buttons["Журнал"].tap()
         let add = app.buttons["maintenance-add-record"]
         XCTAssertTrue(add.waitForExistence(timeout: responseTimeout))
@@ -156,7 +165,14 @@ final class DashboardUITests: XCTestCase {
         app.buttons["Топливо"].tap()
         XCTAssertTrue(app.buttons["maintenance-add-fill"].waitForExistence(timeout: responseTimeout))
         snapshot(app, named: "21-Maintenance-Fuel")
+        app.buttons["maintenance-add-fill"].tap()
+        XCTAssertTrue(app.textFields["maintenance-fill-litres"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "27-Refuel-Editor")
+        app.buttons["Отмена"].tap()
         app.buttons["Каталог"].tap()
+        let engine = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Двигатель")).firstMatch
+        XCTAssertTrue(engine.waitForExistence(timeout: responseTimeout))
+        engine.tap()
         XCTAssertTrue(app.staticTexts["Моторное масло"].waitForExistence(timeout: responseTimeout))
         snapshot(app, named: "22-Maintenance-Catalog")
         app.buttons["maintenance-export"].tap()
@@ -184,6 +200,13 @@ final class DashboardUITests: XCTestCase {
         rule.tap()
         XCTAssertTrue(app.switches["Оценивать правило"].waitForExistence(timeout: responseTimeout))
         snapshot(app, named: "25-Monitoring-Rule")
+        app.buttons["Закрыть"].tap()
+        let baseline = app.buttons["vehicle-baseline"]
+        for _ in 0..<8 where !baseline.isHittable { app.swipeUp() }
+        XCTAssertTrue(baseline.isHittable)
+        baseline.tap()
+        XCTAssertTrue(app.buttons["Закрыть"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "28-Vehicle-Baseline")
     }
 
     @MainActor func testThresholdCanBeAdjustedAndReset() {

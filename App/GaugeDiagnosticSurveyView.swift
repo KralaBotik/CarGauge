@@ -49,7 +49,9 @@ struct GaugeDiagnosticSurveyView: View {
             Text("CarGauge прочитает только стандартные параметры и сведения об ошибках.")
         }
         .sheet(isPresented: $showingVehicleReport) {
-            VehicleReportSheet(archive: model.drive.archive, initialScope: .survey)
+            if let report = model.diagnosticReport {
+                VehicleReportSheet(archive: model.drive.archive, initialScope: .surveyRecord(report.id))
+            }
         }
         .fileExporter(isPresented: $exporting, document: document, contentType: export.contentType,
                       defaultFilename: "CarGauge-\(export.suffix)") { result in

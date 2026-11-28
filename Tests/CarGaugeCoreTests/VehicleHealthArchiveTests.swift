@@ -107,12 +107,15 @@ private func survey(at second: Double, stored: [[String]]? = nil,
     manual.state = .completed
     try await archive.saveDiagnostic(manual)
     try await archive.saveDiagnostic(survey(at: 30, stored: [["P0300"]]))
+    await #expect(throws: DriveSQL.Failure.self) {
+        try await archive.vehicleReport(scope: .surveyRecord(UUID()), format: .json)
+    }
     let data = try await archive.vehicleReport(scope: .survey, format: .json)
     let publicReport = String(decoding: data, as: UTF8.self)
     #expect(publicReport.contains(manual.id.uuidString))
     #expect(!publicReport.contains("P0300"))
     #expect(!publicReport.contains("custom-private-vehicle"))
-    let privateData = try await archive.vehicleReport(scope: .survey, format: .json, includePrivate: true)
+    let privateData = try await archive.vehicleReport(scope: .surveyRecord(manual.id), format: .json, includePrivate: true)
     let privateReport = String(decoding: privateData, as: UTF8.self)
     #expect(privateReport.contains("custom-private-vehicle") && privateReport.contains("ELM327"))
 }
@@ -187,4 +190,10 @@ private func survey(at second: Double, stored: [[String]]? = nil,
     await #expect(throws: FuelCalibrationError.self) {
         try await archive.calibrateFromJournal(startID: start.id, endID: finish.id, attestsCoverage: true)
     }
+    let reset = try await archive.resetCalibration()
+    #expect(reset.matchedFills == 0 && reset.factor == 1)
+    #expect(try db.scalar("SELECT COUNT(*) FROM fill") == 1)
+    let recalibrated = try await archive.calibrateFromJournal(startID: start.id, endID: finish.id, attestsCoverage: true)
+    #expect(recalibrated.matchedFills == 1 && recalibrated.factor == 1.2)
+    #expect(try db.scalar("SELECT COUNT(*) FROM fill") == 2)
 }
