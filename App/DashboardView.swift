@@ -9,6 +9,8 @@ struct DashboardView: View {
     var previewDate: Date? = nil
     let showHistory: () -> Void
     let showAdapter: () -> Void
+    let showDiagnostics: () -> Void
+    let showMaintenance: () -> Void
 
     var body: some View {
         GaugePage(spacing: GaugeSpacing.medium) {
@@ -38,6 +40,8 @@ struct DashboardView: View {
                 if !model.history.isEmpty { chartSection }
                 DriveDashboardReadings(drive: model.drive)
             }
+            VehicleQuickStatus(health: model.drive.health, service: model.drive.service,
+                               openDiagnosis: showDiagnostics, openService: showMaintenance)
         }
         .accessibilityIdentifier("instruments-screen")
     }

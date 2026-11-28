@@ -1,12 +1,13 @@
 import SwiftUI
 
 enum GaugeMainSection: String, CaseIterable {
-    case instruments, history, settings
+    case instruments, history, maintenance, settings
 
     var title: String {
         switch self {
         case .instruments: "Приборы"
         case .history: "Поездка"
+        case .maintenance: "ТО"
         case .settings: "Настройки"
         }
     }
@@ -15,6 +16,7 @@ enum GaugeMainSection: String, CaseIterable {
         switch self {
         case .instruments: "gauge.with.dots.needle.33percent"
         case .history: "chart.xyaxis.line"
+        case .maintenance: "wrench.and.screwdriver"
         case .settings: "gearshape"
         }
     }
@@ -72,7 +74,7 @@ struct GaugeNavigationBar: View {
             .background(selected ? palette.panel : .clear, in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(section.title)
+        .accessibilityLabel(section == .maintenance ? "Обслуживание" : section.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityIdentifier("\(section.rawValue)-nav")
     }

@@ -159,3 +159,166 @@ extension TelemetryArchive {
         return Data(out.utf8)
     }
 }
+
+private struct VehicleReportEnvelope: Encodable {
+    struct Code: Encodable {
+        let observation: DTCFinding
+        let description: DTCDescription?
+    }
+
+    let schemaVersion = 1
+    let profile = "Hyundai Elantra HD 2011 · G4FC 1.6 · МКПП"
+    let generated = Date.now
+    let coordinates = "not_collected"
+    let includesPrivateText: Bool
+    let scope: String
+    let trips: [RecordedTrip]
+    let readings: [ArchivedReading]
+    let gaps: [ArchivedGap]
+    let codes: [Code]
+    let dtcHistory: [DTCHistoryEntry]
+    let surveys: [ReportSurvey]
+    let rules: [MonitoringRule]
+    let events: [MonitoringEvent]
+    let maintenance: MaintenanceLedger?
+    let usage: MaintenanceUsageDetail?
+    let timeline: [HistoryMarker]
+    let limitations = [
+        "Стандартные OBD-ответы анонимны. Неизвестный результат не означает отсутствия ошибок.",
+        "Оценка расхода относится к интервалам со свежими данными. Расход до подключения неизвестен.",
+        "Сравнение показаний до и после работ не доказывает причинную связь."
+    ]
+}
+
+extension TelemetryArchive {
+    public func vehicleReport(scope: VehicleReportScope, format: VehicleReportFormat,
+                              includePrivate: Bool = false) throws -> Data {
+        let db = try database()
+        return try db.transaction(readOnly: true) {
+            try exportVehicle(scope: scope, format: format, includePrivate: includePrivate)
+        }
+    }
+
+    private func exportVehicle(scope: VehicleReportScope, format: VehicleReportFormat, includePrivate: Bool) throws -> Data {
+        var trips: [RecordedTrip] = []
+        var events: [MonitoringEvent] = []
+        var sourceSurveys: [DiagnosticReport] = []
+        var findings: [DTCFinding] = []
+        var history: [DTCHistoryEntry] = []
+        var readingRange: ClosedRange<Date>?
+        var service: MaintenanceLedger?
+        var usage: MaintenanceUsageDetail?
+        var reportScope: String
+        switch scope {
+        case .trip(let selected):
+            if let selected, let trip = try trip(id: selected) { trips = [trip] }
+            else if selected == nil { trips = try recentTrips(limit: 1) }
+            if let trip = trips.first {
+                events = try tripMonitoringEvents(trip.id)
+                sourceSurveys = try tripSurveys(trip.id)
+            }
+            reportScope = "trip"
+        case .problem(let issue):
+            events = try monitoringEvents(issue: issue, limit: nil)
+            let ids = Set(events.compactMap(\.tripID)).sorted()
+            trips = try ids.compactMap { try trip(id: $0) }
+            if let first = events.last?.occurredAt, let last = events.first?.occurredAt {
+                readingRange = first.addingTimeInterval(-120)...last.addingTimeInterval(120)
+            }
+            let codes = Set(events.flatMap(\.relatedDTCs))
+            findings = try dtcFindings().filter { codes.contains($0.code) }
+            history = try dtcHistory().filter { codes.contains($0.code) }
+            for id in ids { sourceSurveys += try tripSurveys(id) }
+            reportScope = "problem"
+        case .survey:
+            sourceSurveys = try surveys(limit: 1)
+            reportScope = "survey"
+        case .diagnostics:
+            sourceSurveys = try surveys()
+            findings = try dtcFindings()
+            history = try dtcHistory()
+            events = try monitoringEvents(limit: nil)
+            reportScope = "diagnostics"
+        case .servicing:
+            let ledger = try maintenanceWithoutAttachments()
+            service = includePrivate ? ledger : ledger.redactedCopy()
+            if let date = ledger.latestOdometer?.date { usage = try maintenanceUsageDetail(after: date) }
+            reportScope = "servicing"
+        }
+
+        var samples: [ArchivedReading] = []
+        var gaps: [ArchivedGap] = []
+        var timeline: [HistoryMarker] = []
+        for trip in trips {
+            samples += try archivedReadings(trip: trip.id, range: readingRange)
+            gaps += try archivedGaps(trip: trip.id)
+            timeline += try historyMarkers(trip: trip.id, includePrivate: includePrivate)
+        }
+        if format == .csv {
+            if scope == .survey, let survey = sourceSurveys.first { return Data(survey.csv().utf8) }
+            if scope == .diagnostics || scope == .servicing {
+                throw DriveSQL.Failure(message: "CSV телеметрии доступен для поездки, проблемы или обследования.")
+            }
+            return Self.telemetryCSV(samples)
+        }
+        if format == .txt {
+            let stamp = Date.now.ISO8601Format()
+            var lines = [
+                "CarGauge · Hyundai Elantra HD 2011 / G4FC", stamp,
+                "Обследований \(sourceSurveys.count) · поездок \(trips.count) · разрывов \(gaps.count)",
+                "Событий мониторинга \(events.count) · результатов по DTC \(findings.count)"
+            ]
+            for trip in trips {
+                let km = trip.distanceKm.map { String($0) + " км" } ?? "пробег неизвестен"
+                let fuel = trip.litres.map { String($0) + " л" } ?? "расход неизвестен"
+                lines.append("Поездка \(trip.startedAt.ISO8601Format()) · \(km) · оценка топлива \(fuel)")
+            }
+            for event in events {
+                lines.append("\(event.occurredAt.ISO8601Format()) · \(event.ruleID) v\(event.ruleVersion) · \(event.kind.rawValue) · \(event.severity.title)")
+            }
+            for finding in findings {
+                lines.append("\(finding.code) · \(finding.status.title) · последнее обнаружение \(finding.lastSeen.ISO8601Format())")
+            }
+            if let service {
+                lines.append("Записей обслуживания \(service.records.count) · заправок \(service.fills.count)")
+            }
+            if let survey = sourceSurveys.first, scope == .survey {
+                let groups = survey.codes.flatMap { group in
+                    group.replyGroups.map { "\(group.status.title) · \($0.joined(separator: ", "))" }
+                }
+                lines += groups
+                lines.append(contentsOf: survey.exchanges.map { "\($0.command) · \($0.outcome.title)" })
+            }
+            lines.append("Технические результаты относятся к фактически полученным данным.")
+            return Data((lines.joined(separator: "\n") + "\n").utf8)
+        }
+
+        let ruleIDs = Set(events.map(\.ruleID))
+        let rules = MonitoringProfile.g4fc.rules.filter { scope == .diagnostics || ruleIDs.contains($0.id) }
+        let envelope = VehicleReportEnvelope(includesPrivateText: includePrivate, scope: reportScope,
+            trips: trips, readings: samples, gaps: gaps,
+            codes: findings.map { .init(observation: $0, description: DTCCatalog.lookup($0.code)) }, dtcHistory: history,
+            surveys: sourceSurveys.map { ReportSurvey($0, includePrivate: includePrivate) },
+            rules: rules, events: events, maintenance: service, usage: usage, timeline: timeline)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(envelope)
+    }
+
+    private func tripMonitoringEvents(_ id: Int64) throws -> [MonitoringEvent] {
+        var rows: [MonitoringEvent] = []
+        try database().query("SELECT payload FROM monitoring_event WHERE trip_id=? ORDER BY utc", [.integer(id)]) { row in
+            if let data = DriveSQL.data(row, 0) { rows.append(try JSONDecoder().decode(MonitoringEvent.self, from: data)) }
+        }
+        return rows
+    }
+
+    private func tripSurveys(_ id: Int64) throws -> [DiagnosticReport] {
+        var rows: [DiagnosticReport] = []
+        try database().query("SELECT payload FROM diagnostic_receipt WHERE trip_id=? ORDER BY utc", [.integer(id)]) { row in
+            if let data = DriveSQL.data(row, 0) { rows.append(try JSONDecoder().decode(DiagnosticReport.self, from: data)) }
+        }
+        return rows
+    }
+}

@@ -13,7 +13,7 @@ extension TelemetryArchive {
         CREATE INDEX diagnostic_by_time ON diagnostic_receipt(utc DESC);
         CREATE TABLE dtc_scope(status TEXT PRIMARY KEY,last_valid_utc REAL NOT NULL,framing TEXT NOT NULL) WITHOUT ROWID;
         CREATE TABLE dtc_finding(status TEXT NOT NULL,code TEXT NOT NULL,first_utc REAL NOT NULL,last_utc REAL NOT NULL,
-          absent_utc REAL, appearances INTEGER NOT NULL,last_trip INTEGER REFERENCES trip(id),
+          absent_utc REAL, appearances INTEGER NOT NULL,last_trip INTEGER REFERENCES trip(id),last_scope TEXT NOT NULL,
           PRIMARY KEY(status,code)) WITHOUT ROWID;
         CREATE TABLE dtc_history(scan TEXT NOT NULL REFERENCES diagnostic_receipt(id),status TEXT NOT NULL,
           code TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(scan,status,code,kind)) WITHOUT ROWID;
@@ -54,7 +54,7 @@ extension TelemetryArchive {
         return result
     }
 
-    func saveLocalState<T: Encodable>(_ value: T, key: String, in db: DriveSQL) throws {
+    static func saveLocalState<T: Encodable>(_ value: T, key: String, in db: DriveSQL) throws {
         try db.run("""
             INSERT INTO health_state(key,payload) VALUES(?,?)
             ON CONFLICT(key) DO UPDATE SET payload=excluded.payload
@@ -130,24 +130,27 @@ extension TelemetryArchive {
         guard older.map({ time >= $0.0 }) ?? true else { return }
         let codes = Set(group.replyGroups.flatMap { $0 })
         let coverage = "\(framing)#\(group.replyGroups.count)"
-        var previous: [String: Bool] = [:]
-        try db.query("SELECT code,absent_utc FROM dtc_finding WHERE status=?", [.text(status)]) { row in
-            if let code = DriveSQL.string(row, 0) { previous[code] = DriveSQL.number(row, 1) != nil }
+        var previous: [String: (absent: Bool, coverage: String)] = [:]
+        try db.query("SELECT code,absent_utc,last_scope FROM dtc_finding WHERE status=?", [.text(status)]) { row in
+            if let code = DriveSQL.string(row, 0), let scope = DriveSQL.string(row, 2) {
+                previous[code] = (DriveSQL.number(row, 1) != nil, scope)
+            }
         }
+        let observedScope = report.state == .completed ? coverage : "partial"
         for code in codes.sorted() {
-            let kind = previous[code].map { $0 ? "reappeared" : "seen" } ?? "first_seen"
+            let kind = previous[code].map { $0.absent ? "reappeared" : "seen" } ?? "first_seen"
             try db.run("""
-                INSERT INTO dtc_finding(status,code,first_utc,last_utc,appearances,last_trip) VALUES(?,?,?,?,1,?)
+                INSERT INTO dtc_finding(status,code,first_utc,last_utc,appearances,last_trip,last_scope) VALUES(?,?,?,?,1,?,?)
                 ON CONFLICT(status,code) DO UPDATE SET
                 last_utc=excluded.last_utc,appearances=dtc_finding.appearances+(dtc_finding.absent_utc IS NOT NULL),
-                absent_utc=NULL,last_trip=excluded.last_trip
-                """, [.text(status), .text(code), .real(time), .real(time), trip])
+                absent_utc=NULL,last_trip=excluded.last_trip,last_scope=excluded.last_scope
+                """, [.text(status), .text(code), .real(time), .real(time), trip, .text(observedScope)])
             try db.run("INSERT INTO dtc_history(scan,status,code,kind) VALUES(?,?,?,?)",
                        [.text(scan), .text(status), .text(code), .text(kind)])
         }
         // Never interpret silence or an ambiguous collection of respondents as a recovery.
         if group.replyGroups.count == 1, report.state == .completed, older?.1 == coverage {
-            for (code, wasAbsent) in previous where !wasAbsent && !codes.contains(code) {
+            for (code, finding) in previous where !finding.absent && finding.coverage == coverage && !codes.contains(code) {
                 try db.run("UPDATE dtc_finding SET absent_utc=? WHERE status=? AND code=?",
                            [.real(time), .text(status), .text(code)])
                 try db.run("INSERT INTO dtc_history(scan,status,code,kind) VALUES(?,?,?,?)",

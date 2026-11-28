@@ -586,7 +586,7 @@ enum MeasurementPhase {
                     retryBudget.didCompleteCycle()
                     if recordsDrive {
                         lastCapturedCoolant = reading.timestamp
-                        try await drive.capture(owner: id, client: client, background: !sceneIsActive, thermal: level)
+                        try await drive.capture(owner: id, client: client, background: !sceneIsActive, thermal: level, thresholds: thresholds)
                         guard !Task.isCancelled, id == runID else { return }
                         supportResponses = drive.masks
                     }

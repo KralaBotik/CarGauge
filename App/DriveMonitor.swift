@@ -13,6 +13,8 @@ import Foundation
     }
 
     let archive: TelemetryArchive
+    let health: VehicleHealthMonitor
+    let service: VehicleServicePortal
     let isFixture: Bool
     private var liveOwner: UUID?
     private var cooldownOwner: UUID?
@@ -31,14 +33,18 @@ import Foundation
 
     init() {
         #if DEBUG
-        isFixture = ProcessInfo.processInfo.arguments.contains("--telemetry-history-fixture")
+        let testingFixture = ProcessInfo.processInfo.arguments.contains("--telemetry-history-fixture")
         #else
-        isFixture = false
+        let testingFixture = false
         #endif
-        let location = isFixture
+        isFixture = testingFixture
+        let location = testingFixture
             ? URL.temporaryDirectory.appending(path: "CarGauge-tests-\(UUID().uuidString)")
             : URL.applicationSupportDirectory.appending(path: "CarGauge")
-        archive = TelemetryArchive(url: location.appending(path: "History.sqlite3"))
+        let store = TelemetryArchive(url: location.appending(path: "History.sqlite3"))
+        archive = store
+        health = VehicleHealthMonitor(archive: store)
+        service = VehicleServicePortal(archive: store, testData: testingFixture)
         if let saved = UserDefaults.standard.array(forKey: Self.signalsKey) as? [Int] {
             visibleSignals = Set(saved.compactMap { UInt8(exactly: $0).flatMap(DriveSignal.init(rawValue:)) })
         } else {
@@ -58,6 +64,7 @@ import Foundation
 
     func didConnect(owner: UUID, at date: Date) async {
         liveOwner = owner
+        health.begin(owner: owner)
         if cooldownOwner != owner {
             cooldown = OptionalPollCooldown()
             cooldownOwner = owner
@@ -88,7 +95,8 @@ import Foundation
 
     func settingCalibration(_ calibration: FuelCalibrationState) { currentCalibration = calibration.factor }
 
-    func capture(owner: UUID, client: ELM327Client, background: Bool, thermal: ThermalLevel) async throws {
+    func capture(owner: UUID, client: ELM327Client, background: Bool, thermal: ThermalLevel,
+                 thresholds: ThermalThresholds) async throws {
         guard liveOwner == owner else { return }
         var batch = Array(client.latestDriveReadings.values)
         if client.latestDriveReadings[.rpm] == nil {
@@ -162,7 +170,11 @@ import Foundation
                               speed: speed?.isFresh(at: now, within: 3) == true ? speed?.value : nil,
                               fuel: estimate, estimatedEngineStart: startTracker.estimate, connectedAt: connectedAt)
         do {
-            try await archive.record(owner: owner, frame: frame)
+            let trip = try await archive.record(owner: owner, frame: frame)
+            if liveOwner == owner {
+                await health.evaluate(owner: owner, readings: readings, telemetry: frame,
+                                      tripID: trip, thresholds: thresholds)
+            }
             if thermal != lastThermalLevel && (thermal != .normal || lastThermalLevel != nil) {
                 try await archive.addEvent(kind: "temperature_state", payload: thermal.rawValue, owner: owner)
             }
@@ -206,9 +218,9 @@ import Foundation
     }
 
     private func finalizeAutomatic(_ survey: DiagnosticSurvey, owner: UUID) async {
-        automatic = nil
+        if liveOwner == owner { automatic = nil }
         await store(survey.report, kind: "automatic_dtc", owner: owner)
-        automaticReport = survey.report
+        if liveOwner == owner || liveOwner == nil { automaticReport = survey.report }
     }
 
     func saveManual(_ report: DiagnosticReport) async {
@@ -219,6 +231,7 @@ import Foundation
     private func store(_ report: DiagnosticReport, kind: String, owner: UUID? = nil) async {
         do {
             try await archive.saveDiagnostic(report, owner: owner)
+            await health.recordedScan(report, owner: owner)
             let json = try report.json(includeRaw: true)
             var summary: String?
             if kind == "automatic_dtc" {
@@ -250,7 +263,10 @@ import Foundation
         liveOwner = nil
         readings = [:]
         fuel = nil
-        if let survey = automatic {
+        let interrupted = automatic
+        automatic = nil
+        await health.interrupt(owner: owner)
+        if let survey = interrupted {
             survey.interrupt(reason)
             await finalizeAutomatic(survey, owner: owner)
         }

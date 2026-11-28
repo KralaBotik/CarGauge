@@ -69,7 +69,12 @@ struct GaugeDiagnosticsView: View {
                     .accessibilityIdentifier("pid-support-summary")
             }
             GaugeDiagnosticSurveyView(model: model)
-            if model.source == .vehicle || model.drive.isFixture { DriveDiagnosticHistory(drive: model.drive) }
+            if model.source == .vehicle || model.drive.isFixture {
+                VehicleHealthSection(drive: model.drive, health: model.drive.health) {
+                    Task { await model.requestWarningNotifications() }
+                }
+                DriveDiagnosticHistory(drive: model.drive)
+            }
             #if !CARGAUGE_BASIC
             GaugeSection(title: "Общий контейнер виджета") {
                 Text(model.widgetContainerAvailable

@@ -99,7 +99,7 @@ public struct FuelCalibrationState: Sendable {
 }
 
 public enum FuelCalibrationError: LocalizedError {
-    case invalid, coverage, alreadyStarted, noStart, activeEngine, unobserved
+    case invalid, coverage, alreadyStarted, noStart, activeEngine, unobserved, alreadyCalibrated
     public var errorDescription: String? {
         switch self {
         case .invalid: "Проверьте литры и показания одометра полной заправки."
@@ -108,6 +108,7 @@ public enum FuelCalibrationError: LocalizedError {
         case .noStart: "Сначала отметьте полную заправку."
         case .activeEngine: "Завершите текущую запись с остановленным двигателем."
         case .unobserved: "В интервале есть поездки с неизвестной границей работы двигателя."
+        case .alreadyCalibrated: "Этот период пересекается с уже учтённой заправкой."
         }
     }
 }

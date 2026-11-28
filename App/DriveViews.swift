@@ -121,13 +121,15 @@ struct DriveHistorySection: View {
     }
 }
 
-private struct DriveTripDetail: View {
+struct DriveTripDetail: View {
     let drive: DriveMonitor
     @State var trip: RecordedTrip
+    var focusEventID: String? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.gaugePalette) private var palette
     @State private var plot: TripPlot?
     @State private var selection: Double?
+    @State private var markers: [HistoryMarker] = []
     @State private var channels: Set<DriveSignal> = [.coolant, .rpm, .speed]
     @State private var message: String?
 
@@ -140,6 +142,7 @@ private struct DriveTripDetail: View {
             if drive.isFixture { SourceIndicator(source: .simulator) }
             #endif
             metrics
+            if !markers.isEmpty { timelineSection }
             if let plot {
                 channelMenu
                 if plot.gaps > 0 {
@@ -159,6 +162,10 @@ private struct DriveTripDetail: View {
                     guard let snapshot = try await drive.archive.detail(tripID: trip.id, channels: channels) else { break }
                     plot = snapshot.plot
                     trip = snapshot.trip
+                    markers = try await drive.archive.historyMarkers(trip: snapshot.trip.id)
+                    if selection == nil, let focusEventID {
+                        selection = markers.first { $0.id == focusEventID }?.elapsed
+                    }
                     if snapshot.trip.finishReason != nil { break }
                     try await Task.sleep(for: .seconds(5))
                 } while !Task.isCancelled
@@ -166,6 +173,17 @@ private struct DriveTripDetail: View {
                 // Dismissal and channel selection cancel the current reader.
             } catch {
                 message = error.localizedDescription
+            }
+        }
+    }
+
+    private var timelineSection: some View {
+        GaugeSection(title: "События поездки") {
+            ForEach(markers) { marker in
+                Button { selection = marker.elapsed } label: {
+                    Label(marker.title, systemImage: marker.kind == "servicing" ? "wrench" : "waveform.path.ecg")
+                }
+                .buttonStyle(GaugeActionStyle())
             }
         }
     }
@@ -239,6 +257,10 @@ private struct DriveTripDetail: View {
                                 .foregroundStyle(palette.accent)
                         }
                     }
+                    ForEach(markers) { marker in
+                        RuleMark(x: .value("Событие", marker.elapsed))
+                            .foregroundStyle(palette.warning.opacity(0.55))
+                    }
                     if let selection {
                         RuleMark(x: .value("Выбранное время", selection)).foregroundStyle(palette.muted)
                     }
@@ -291,7 +313,7 @@ struct DriveSettingsSection: View {
     }
 }
 
-private struct DriveCalibrationView: View {
+struct DriveCalibrationView: View {
     @ObservedObject var drive: DriveMonitor
     @Environment(\.dismiss) private var dismiss
     @Environment(\.gaugePalette) private var palette

@@ -302,13 +302,60 @@ public actor TelemetryArchive {
         guard officialKm.isFinite, officialKm > 0, odometer.isFinite, litres.isFinite, litres > 0,
               date > start else { throw FuelCalibrationError.invalid }
 
+        let after = Int64(try db.scalar("SELECT trip_cursor FROM fill_start WHERE id=1") ?? 0)
+        let through = Int64(try db.scalar("SELECT COALESCE(MAX(id),0) FROM trip") ?? 0)
+        try db.transaction {
+            try Self.commitCalibration(db, start: start, end: date, officialKm: officialKm, litres: litres,
+                                       afterTrip: after, throughTrip: through)
+            try db.run("UPDATE fill_start SET odometer=?,utc=?,trip_cursor=(SELECT MAX(id) FROM trip) WHERE id=1",
+                       [.real(odometer), .time(date)])
+        }
+        return try calibration()
+    }
+
+    public func calibrateFromJournal(startID: UUID, endID: UUID, attestsCoverage: Bool) throws -> FuelCalibrationState {
+        let db = try database()
+        guard active == nil, pendingEnd == nil else { throw FuelCalibrationError.activeEngine }
+        guard attestsCoverage else { throw FuelCalibrationError.unobserved }
+        let ledger = try maintenanceWithoutAttachments()
+        guard let interval = ledger.fuelIntervals.first(where: { $0.start.id == startID && $0.end.id == endID }),
+              let start = interval.start.date.value, let end = interval.end.date.value, end > start else {
+            throw FuelCalibrationError.invalid
+        }
+        // Start and finish dates are owner supplied. A trip crossing either point
+        // makes the calibration interval ambiguous.
+        let crossing = try db.scalar("""
+            SELECT COUNT(*) FROM trip WHERE (started_utc<? AND last_utc>?)
+              OR (started_utc<? AND last_utc>?)
+            """, [.time(start), .time(start), .time(end), .time(end)]) ?? 0
+        guard crossing == 0 else { throw FuelCalibrationError.unobserved }
+        let first = try db.scalar("SELECT MIN(id) FROM trip WHERE started_utc>=? AND last_utc<=?",
+                                  [.time(start), .time(end)])
+        let last = try db.scalar("SELECT MAX(id) FROM trip WHERE started_utc>=? AND last_utc<=?",
+                                 [.time(start), .time(end)])
+        guard let first, let last, first >= 1, first <= last else { throw FuelCalibrationError.coverage }
+        try db.transaction {
+            try Self.commitCalibration(db, start: start, end: end, officialKm: interval.distanceKm, litres: interval.litres,
+                                       afterTrip: Int64(first) - 1, throughTrip: Int64(last))
+        }
+        return try calibration()
+    }
+
+    private static func commitCalibration(_ db: DriveSQL, start: Date, end date: Date, officialKm: Double,
+                                          litres: Double, afterTrip: Int64, throughTrip: Int64) throws {
+        guard officialKm.isFinite, officialKm > 0, litres.isFinite, litres > 0, date > start else {
+            throw FuelCalibrationError.invalid
+        }
+        let overlapping = try db.scalar("SELECT COUNT(*) FROM fill WHERE start_utc<? AND end_utc>?",
+                                        [.time(date), .time(start)]) ?? 0
+        guard overlapping == 0 else { throw FuelCalibrationError.alreadyCalibrated }
         let invalid = try db.scalar("""
-            SELECT COUNT(*) FROM trip t WHERE t.id>(SELECT trip_cursor FROM fill_start WHERE id=1)
+            SELECT COUNT(*) FROM trip t WHERE t.id>? AND t.id<=?
               AND (t.finish IS NULL OR t.finish!='engine_stopped' OR t.engine_start_utc IS NULL
                 OR t.engine_start_utc>t.started_utc+2 OR t.engine_start_utc<? OR t.started_utc<? OR t.last_utc>?
                 OR EXISTS(SELECT 1 FROM gap g WHERE g.trip_id=t.id)
                 OR EXISTS(SELECT 1 FROM event e WHERE e.trip_id=t.id AND kind='wall_clock_change'))
-            """, [.time(start), .time(start), .time(date)]) ?? 0
+            """, [.integer(afterTrip), .integer(throughTrip), .time(start), .time(start), .time(date)]) ?? 0
         guard invalid == 0 else { throw FuelCalibrationError.unobserved }
 
         var coverage = (engine: 0.0, fuel: 0.0, km: 0.0, base: 0.0)
@@ -319,9 +366,9 @@ public actor TelemetryArchive {
                 SUM(CASE WHEN f.base_litres IS NOT NULL THEN f.observed ELSE 0 END) AS fuel_seconds,
                 SUM(f.paired_km) AS paired_km,SUM(f.base_litres) AS base
               FROM trip t JOIN frame f ON f.trip_id=t.id
-              WHERE t.id>(SELECT trip_cursor FROM fill_start WHERE id=1) GROUP BY t.id
+              WHERE t.id>? AND t.id<=? GROUP BY t.id
             ) x
-            """) { row in
+            """, [.integer(afterTrip), .integer(throughTrip)]) { row in
             coverage = (sqlite3_column_double(row, 0), sqlite3_column_double(row, 1),
                         sqlite3_column_double(row, 2), sqlite3_column_double(row, 3))
         }
@@ -329,14 +376,9 @@ public actor TelemetryArchive {
               (0.90...1.10).contains(coverage.km / officialKm), (litres / coverage.base).isFinite else {
             throw FuelCalibrationError.coverage
         }
-        try db.transaction {
-            try db.run("INSERT INTO fill(start_utc,end_utc,km,litres,base_litres,engine_seconds,fuel_seconds,paired_km) VALUES(?,?,?,?,?,?,?,?)",
-                       [.time(start), .time(date), .real(officialKm), .real(litres), .real(coverage.base),
-                        .real(coverage.engine), .real(coverage.fuel), .real(coverage.km)])
-            try db.run("UPDATE fill_start SET odometer=?,utc=?,trip_cursor=(SELECT MAX(id) FROM trip) WHERE id=1",
-                       [.real(odometer), .time(date)])
-        }
-        return try calibration()
+        try db.run("INSERT INTO fill(start_utc,end_utc,km,litres,base_litres,engine_seconds,fuel_seconds,paired_km) VALUES(?,?,?,?,?,?,?,?)",
+                   [.time(start), .time(date), .real(officialKm), .real(litres), .real(coverage.base),
+                    .real(coverage.engine), .real(coverage.fuel), .real(coverage.km)])
     }
 
     private static func saveFrame(_ frame: TripFrame, id: Int64, elapsed: Double,

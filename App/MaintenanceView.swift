@@ -7,6 +7,7 @@ struct MaintenanceView: View {
     var openFuelCalibration: (() -> Void)? = nil
     var useFuelInterval: (@MainActor (MaintenanceFuelInterval) async throws -> Void)? = nil
     var compareRecord: ((MaintenanceRecord, MaintenanceComponent) -> Void)? = nil
+    @ObservedObject var portal: VehicleServicePortal
 
     @Environment(\.gaugePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -166,6 +167,12 @@ struct MaintenanceView: View {
                 LabeledContent("Моточасы по записи владельца", value: estimate(counters.engineHours, unit: "ч", certainty: counters.engineHoursCertainty))
                 if let hours = counters.observedEngineHours {
                     LabeledContent("Наблюдалось после отметки", value: number(hours, unit: "ч"))
+                }
+                if let seconds = portal.usage?.additionalRunTimeSeconds, seconds > 0 {
+                    LabeledContent("До наблюдения · оценка по 011F", value: "≈" + number(seconds / 3600, unit: "ч"))
+                }
+                if let notice = portal.noticeMessage {
+                    Text(notice).font(.footnote).foregroundStyle(palette.warning)
                 }
                 Button("Записать одометр") { editor = .odometer(nil) }
                     .buttonStyle(GaugeActionStyle())

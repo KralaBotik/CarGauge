@@ -1,3 +1,4 @@
+import CarGaugeCore
 import Foundation
 import SwiftUI
 
@@ -64,6 +65,9 @@ struct CarGaugeShell: View {
     @State private var section: GaugeMainSection = .instruments
     @State private var path: [GaugeDestination] = []
     @State private var showsAdapterSetup = false
+    @State private var showsServiceExport = false
+    @State private var showsFuelCalibration = false
+    @State private var serviceComparison: ServicingComparisonRequest?
 
     var body: some View {
         let palette = GaugePalette(scheme: colorScheme)
@@ -93,6 +97,20 @@ struct CarGaugeShell: View {
             selectSection(.instruments)
             showsAdapterSetup = false
         }
+        .task(id: isActive) {
+            guard isActive, previewDate == nil else { return }
+            await model.drive.health.prepare()
+            await model.drive.service.refresh()
+        }
+        .sheet(isPresented: $showsServiceExport) {
+            VehicleReportSheet(archive: model.drive.archive, initialScope: .servicing)
+        }
+        .sheet(isPresented: $showsFuelCalibration) {
+            DriveCalibrationView(drive: model.drive)
+        }
+        .sheet(item: $serviceComparison) {
+            ServicingComparisonSheet(drive: model.drive, request: $0)
+        }
         .tint(palette.accent)
         .environment(\.gaugePalette, palette)
     }
@@ -101,7 +119,8 @@ struct CarGaugeShell: View {
         switch section {
         case .instruments:
             DashboardView(model: model, previewDate: previewDate,
-                          showHistory: { selectSection(.history) }, showAdapter: { showsAdapterSetup = true })
+                          showHistory: { selectSection(.history) }, showAdapter: { showsAdapterSetup = true },
+                          showDiagnostics: { path.append(.diagnostics) }, showMaintenance: { selectSection(.maintenance) })
                 .navigationTitle("Приборы")
                 .toolbar(.hidden, for: .navigationBar)
         case .history:
@@ -109,6 +128,26 @@ struct CarGaugeShell: View {
                 .navigationTitle("Поездка")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar(.visible, for: .navigationBar)
+        case .maintenance:
+            MaintenanceView(store: model.drive.service, openFuelCalibration: { showsFuelCalibration = true },
+                            useFuelInterval: { interval in
+                                let archive = model.drive.archive
+                                let state = try await archive.calibrateFromJournal(startID: interval.start.id,
+                                                                                  endID: interval.end.id,
+                                                                                  attestsCoverage: true)
+                                model.drive.settingCalibration(state)
+                            }, compareRecord: { record, component in
+                                serviceComparison = ServicingComparisonRequest(record: record, component: component)
+                            }, portal: model.drive.service)
+                .navigationTitle("Обслуживание")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(.visible, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Поделиться отчётом", systemImage: "square.and.arrow.up") { showsServiceExport = true }
+                            .accessibilityIdentifier("maintenance-export")
+                    }
+                }
         case .settings:
             GaugeSettingsView(model: model, appearance: $appearance, isActive: isActive,
                               showAdapter: { showsAdapterSetup = true },
