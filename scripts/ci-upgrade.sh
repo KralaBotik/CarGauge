@@ -80,24 +80,41 @@ assert json.loads(p["thermalThresholds"])["warning"] == 108
 assert json.loads(p["verifiedOBDAdapter"])["name"] == "Vgate iCar Pro BLE (CI)"
 print("VERIFIED: CarGauge 0.8.0 -> 0.9.0 update preserved preferences and verified adapter")
 PY
+# Xcode may reinstall the test app and move its data container. Verify the
+# database through a direct launch of the actual upgraded app first.
+xcrun simctl launch "$simulator" "$bundle"
+live_container="$(xcrun simctl get_app_container "$simulator" "$bundle" data)"
+python3 - "$live_container" <<'PY'
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+history = Path(sys.argv[1]) / "Library" / "Application Support" / "CarGauge" / "History.sqlite3"
+deadline = time.monotonic() + 30
+last_state = "database file missing"
+while True:
+    try:
+        with sqlite3.connect(history.as_uri() + "?mode=ro", uri=True, timeout=1) as db:
+            version = db.execute("PRAGMA user_version").fetchone()
+            last_state = f"user_version={version[0]}"
+            if version == (2,):
+                assert db.execute("PRAGMA quick_check").fetchone() == ("ok",)
+                assert db.execute("SELECT owner, finish FROM trip WHERE id=908").fetchone() == ("upgrade-ci", "engine_stopped")
+                assert db.execute("SELECT value, bytes FROM reading WHERE frame_id=909").fetchone() == (90.0, "82")
+                assert db.execute("SELECT km,litres,base_litres FROM fill").fetchone() == (300.0, 24.0, 20.0)
+                break
+    except sqlite3.OperationalError as error:
+        last_state = str(error)
+    if time.monotonic() >= deadline:
+        raise RuntimeError(f"Release did not migrate the seeded SQLite database at {history}: {last_state}")
+    time.sleep(0.5)
+print("VERIFIED: 0.8 SQLite trip, raw PID and fuel calibration survived app upgrade")
+PY
+xcrun simctl terminate "$simulator" "$bundle"
+
 xcodebuild -project CarGauge.xcodeproj -scheme CarGauge -configuration Release \
   -destination "platform=iOS Simulator,arch=arm64,id=$simulator" \
   -derivedDataPath "$derived" -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES \
   -resultBundlePath "$output/CarGauge-ReleaseUpgrade.xcresult" \
   -only-testing:CarGaugeUITests/DashboardUITests/testReleaseUpgradeRetainsPreferences test
-
-
-python3 - "$after" <<'PY'
-import sqlite3
-import sys
-from pathlib import Path
-
-history = Path(sys.argv[1]) / "Library" / "Application Support" / "CarGauge" / "History.sqlite3"
-with sqlite3.connect(history.as_uri() + "?mode=ro", uri=True) as db:
-    assert db.execute("PRAGMA user_version").fetchone() == (2,)
-    assert db.execute("PRAGMA quick_check").fetchone() == ("ok",)
-    assert db.execute("SELECT owner, finish FROM trip WHERE id=908").fetchone() == ("upgrade-ci", "engine_stopped")
-    assert db.execute("SELECT value, bytes FROM reading WHERE frame_id=909").fetchone() == (90.0, "82")
-    assert db.execute("SELECT km,litres,base_litres FROM fill").fetchone() == (300.0, 24.0, 20.0)
-print("VERIFIED: 0.8 SQLite trip, raw PID and fuel calibration survived app upgrade")
-PY
