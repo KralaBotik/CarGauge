@@ -81,6 +81,8 @@ struct CarGaugeShell: View {
                                 .navigationTitle("Диагностика")
                                 .navigationBarTitleDisplayMode(.inline)
                                 .toolbar(.visible, for: .navigationBar)
+                                .toolbarBackground(palette.canvas, for: .navigationBar)
+                                .toolbarBackground(.visible, for: .navigationBar)
                         }
                     }
             }

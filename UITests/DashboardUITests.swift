@@ -193,12 +193,14 @@ final class DashboardUITests: XCTestCase {
         let report = app.buttons["vehicle-report"]
         for _ in 0..<8 where !report.isHittable { app.swipeUp() }
         XCTAssertTrue(report.isHittable)
+        XCTAssertTrue(app.staticTexts["source-indicator"].firstMatch.isHittable)
         snapshot(app, named: "24-Vehicle-Monitoring")
         let rule = app.buttons["monitoring-rule-coolant.warning"]
         for _ in 0..<8 where !rule.isHittable { app.swipeUp() }
         XCTAssertTrue(rule.isHittable)
         rule.tap()
         XCTAssertTrue(app.switches["Оценивать правило"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].firstMatch.isHittable)
         snapshot(app, named: "25-Monitoring-Rule")
         app.buttons["Закрыть"].tap()
         let baseline = app.buttons["vehicle-baseline"]

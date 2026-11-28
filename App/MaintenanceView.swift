@@ -165,6 +165,11 @@ struct MaintenanceView: View {
                     LabeledContent("Оценка по записанным поездкам", value: "≈" + number(estimated, unit: "км"))
                 }
                 LabeledContent("Моточасы по записи владельца", value: estimate(counters.engineHours, unit: "ч", certainty: counters.engineHoursCertainty))
+                #if DEBUG
+                if portal.testData, counters.observedEngineHours != nil || portal.usage?.additionalRunTimeSeconds != nil {
+                    SourceIndicator(source: .simulator)
+                }
+                #endif
                 if let hours = counters.observedEngineHours {
                     LabeledContent(ledger.latestOdometer == nil ? "Наблюдалось в журнале" : "Наблюдалось после отметки", value: number(hours, unit: "ч"))
                 }

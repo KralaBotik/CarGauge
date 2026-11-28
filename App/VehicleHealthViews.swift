@@ -116,15 +116,22 @@ struct VehicleHealthSection: View {
         .onChange(of: health.diagnosticRevision) { _, _ in Task { await load() } }
         .onChange(of: health.openIssues.map(\.id)) { _, _ in Task { await load() } }
         .sheet(item: $route) { item in
-            switch item {
-            case .rule(let rule): HealthRuleSheet(health: health, rule: rule)
-            case .code(let finding): DTCFindingSheet(drive: drive, finding: finding)
-            case .issue(let event): HealthProblemSheet(drive: drive, event: event)
-            case .voltage: AdapterVoltageSheet(drive: drive, health: health)
-            case .baseline: VehicleBaselineSheet(health: health)
-            case .fuel: FuelComparisonSheet(drive: drive)
-            case .export(let scope): VehicleReportSheet(archive: drive.archive, initialScope: scope)
+            Group {
+                switch item {
+                case .rule(let rule): HealthRuleSheet(health: health, rule: rule)
+                case .code(let finding): DTCFindingSheet(drive: drive, finding: finding)
+                case .issue(let event): HealthProblemSheet(drive: drive, event: event)
+                case .voltage: AdapterVoltageSheet(drive: drive, health: health)
+                case .baseline: VehicleBaselineSheet(health: health)
+                case .fuel: FuelComparisonSheet(drive: drive)
+                case .export(let scope): VehicleReportSheet(archive: drive.archive, initialScope: scope)
+                }
             }
+            #if DEBUG
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if drive.isFixture { DiagnosticFixtureBanner() }
+            }
+            #endif
         }
     }
 
@@ -385,3 +392,18 @@ private struct AdapterVoltageSheet: View {
 
     private func parse(_ text: String) -> Double? { Double(text.replacingOccurrences(of: ",", with: ".")) }
 }
+
+
+#if DEBUG
+struct DiagnosticFixtureBanner: View {
+    @Environment(\.gaugePalette) private var palette
+
+    var body: some View {
+        SourceIndicator(source: .simulator)
+            .padding(.horizontal, GaugeSpacing.page)
+            .padding(.vertical, GaugeSpacing.xsmall)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(palette.canvas)
+    }
+}
+#endif

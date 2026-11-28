@@ -50,7 +50,7 @@ struct GaugeDiagnosticsView: View {
                 .accessibilityIdentifier("diagnostic-status")
 
             #if DEBUG
-            if model.source == .simulator { SourceIndicator(source: model.source) }
+            if model.source == .simulator && !model.drive.isFixture { SourceIndicator(source: model.source) }
             #endif
             if model.source == .vehicle {
                 GaugeSection(title: "Соединение") {
@@ -87,6 +87,11 @@ struct GaugeDiagnosticsView: View {
             #endif
         }
         .accessibilityIdentifier("diagnostics-screen")
+        #if DEBUG
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.drive.isFixture { DiagnosticFixtureBanner() }
+        }
+        #endif
     }
 
     private func diagnosticField(_ name: String, _ value: String) -> some View {
