@@ -139,6 +139,53 @@ final class DashboardUITests: XCTestCase {
         snapshot(app, named: "17-Recorded-Trip")
     }
 
+    @MainActor func testMaintenanceNavigationAndReport() {
+        let app = launch(appearance: "light", options: ["--telemetry-history-fixture"])
+        app.buttons["maintenance-nav"].tap()
+        XCTAssertTrue(app.staticTexts["maintenance-odometer"].waitForExistence(timeout: responseTimeout))
+        XCTAssertTrue(app.buttons["maintenance-add-odometer"].exists)
+        snapshot(app, named: "18-Maintenance-Plan")
+        app.buttons["Журнал"].tap()
+        let add = app.buttons["maintenance-add-record"]
+        XCTAssertTrue(add.waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "19-Maintenance-Journal")
+        add.tap()
+        XCTAssertTrue(app.buttons["Отмена"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "20-Maintenance-Editor")
+        app.buttons["Отмена"].tap()
+        app.buttons["Топливо"].tap()
+        XCTAssertTrue(app.buttons["maintenance-add-fill"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "21-Maintenance-Fuel")
+        app.buttons["Каталог"].tap()
+        XCTAssertTrue(app.staticTexts["Моторное масло"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "22-Maintenance-Catalog")
+        app.buttons["maintenance-export"].tap()
+        XCTAssertTrue(app.buttons["prepare-report-json"].waitForExistence(timeout: responseTimeout))
+        app.buttons["prepare-report-json"].tap()
+        XCTAssertTrue(app.buttons["share-report-file"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "23-Maintenance-Export")
+    }
+
+    @MainActor func testMonitoringRuleDetailsAndReadOnlyHistory() {
+        let app = launch(options: ["--telemetry-history-fixture"])
+        XCTAssertTrue(app.staticTexts["coolant-value"].waitForExistence(timeout: responseTimeout))
+        app.buttons["settings-nav"].tap()
+        let diagnostics = app.buttons["diagnostics-nav"]
+        for _ in 0..<7 where !diagnostics.isHittable { app.swipeUp() }
+        XCTAssertTrue(diagnostics.isHittable)
+        diagnostics.tap()
+        let report = app.buttons["vehicle-report"]
+        for _ in 0..<8 where !report.isHittable { app.swipeUp() }
+        XCTAssertTrue(report.isHittable)
+        snapshot(app, named: "24-Vehicle-Monitoring")
+        let rule = app.buttons["monitoring-rule-coolant.warning"]
+        for _ in 0..<8 where !rule.isHittable { app.swipeUp() }
+        XCTAssertTrue(rule.isHittable)
+        rule.tap()
+        XCTAssertTrue(app.switches["Оценивать правило"].waitForExistence(timeout: responseTimeout))
+        snapshot(app, named: "25-Monitoring-Rule")
+    }
+
     @MainActor func testThresholdCanBeAdjustedAndReset() {
         let app = launch()
         app.buttons["settings-nav"].tap()
