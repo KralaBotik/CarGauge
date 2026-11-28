@@ -84,3 +84,107 @@ private func survey(at second: Double, stored: [[String]]? = nil,
     try copy.query("PRAGMA quick_check") { integrity = DriveSQL.string($0, 0) }
     #expect(integrity == "ok")
 }
+
+@Test func anonymousMultiResponderFindingSurvivesTwoSingleEmptyReplies() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = TelemetryArchive(url: root.appending(path: "history.sqlite"))
+    try await archive.saveDiagnostic(survey(at: 5, stored: [["P0300"], []]))
+    try await archive.saveDiagnostic(survey(at: 6, stored: [[]]))
+    try await archive.saveDiagnostic(survey(at: 7, stored: [[]]))
+    let finding = try #require(await archive.dtcFindings().first)
+    #expect(finding.code == "P0300")
+    #expect(finding.notReportedAt == nil)
+}
+
+@Test func surveyExportChoosesManualReportsAndRedactsAdapterBeforeSharing() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = TelemetryArchive(url: root.appending(path: "history.sqlite"))
+    var manual = DiagnosticReport(startedAt: Date(timeIntervalSince1970: 20), firstObservedCoolantAt: nil,
+                                  adapterName: "custom-private-vehicle", adapterIdentification: "ELM327",
+                                  source: .vehicle, stationaryConfirmedByUser: true)
+    manual.state = .completed
+    try await archive.saveDiagnostic(manual)
+    try await archive.saveDiagnostic(survey(at: 30, stored: [["P0300"]]))
+    let data = try await archive.vehicleReport(scope: .survey, format: .json)
+    let publicReport = String(decoding: data, as: UTF8.self)
+    #expect(publicReport.contains(manual.id.uuidString))
+    #expect(!publicReport.contains("P0300"))
+    #expect(!publicReport.contains("custom-private-vehicle"))
+    let privateData = try await archive.vehicleReport(scope: .survey, format: .json, includePrivate: true)
+    let privateReport = String(decoding: privateData, as: UTF8.self)
+    #expect(privateReport.contains("custom-private-vehicle") && privateReport.contains("ELM327"))
+}
+
+@Test func maintenanceRecordAndAttachmentSurviveReopenAndDeleteTogether() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appending(path: "history.sqlite")
+    let archive = TelemetryArchive(url: url)
+    let receipt = MaintenanceAttachment(filename: "service-receipt.pdf", mediaType: "application/pdf",
+                                        data: Data("%PDF-1.4".utf8))
+    let record = MaintenanceRecord(date: .init(Date(timeIntervalSince1970: 110), certainty: .approximate),
+                                    comment: "private-note", work: [.init(componentID: "engine-oil"),
+                                        .init(componentID: "oil-filter")], attachments: [receipt])
+    _ = try await archive.applyMaintenance(.saveRecord(record))
+    let reopened = TelemetryArchive(url: url)
+    let found = try #require(await reopened.readMaintenance().records.first)
+    #expect(found.work.count == 2)
+    #expect(found.date.certainty == .approximate)
+    #expect(found.attachments.first?.data == receipt.data)
+    let report = try await reopened.vehicleReport(scope: .servicing, format: .json)
+    let body = String(decoding: report, as: UTF8.self)
+    #expect(!body.contains("private-note") && !body.contains("service-receipt.pdf"))
+    _ = try await reopened.applyMaintenance(.deleteRecord(found.id))
+    #expect(try await reopened.readMaintenance().records.isEmpty)
+    let sql = try DriveSQL(url: url)
+    #expect(try sql.scalar("SELECT COUNT(*) FROM maintenance_attachment") == 0)
+}
+
+@Test func runTimeEstimatorExcludesObservedAndOverlappingPreconnectionSeconds() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appending(path: "history.sqlite")
+    let archive = TelemetryArchive(url: url)
+    _ = try await archive.readMaintenance()
+    let db = try DriveSQL(url: url)
+    try db.execute("""
+        INSERT INTO trip(id,owner,started_utc,last_utc,engine_start_utc,finish)
+        VALUES(1,'a',100,110,90,'link_lost'),(2,'b',115,125,91,'engine_stopped');
+        INSERT INTO frame(trip_id,utc,elapsed,observed,km,idle,discontinuous)
+        VALUES(1,110,10,10,0.1,0,0),(2,125,10,10,0.2,0,0);
+        """)
+    let usage = try await archive.maintenanceUsageDetail(after: Date(timeIntervalSince1970: 85))
+    #expect(usage.observedSeconds == 20)
+    #expect(usage.additionalRunTimeSeconds == 15)
+    #expect(abs((usage.kilometres ?? 0) - 0.3) < 0.000_01)
+}
+
+@Test func journalCalibrationRequiresCoverageAndAppliesAnIntervalOnce() async throws {
+    let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appending(path: "history.sqlite")
+    let archive = TelemetryArchive(url: url)
+    let start = MaintenanceFill(date: .init(Date(timeIntervalSince1970: 50)), odometer: .init(1000),
+                                litres: 20, fullTank: true)
+    let finish = MaintenanceFill(date: .init(Date(timeIntervalSince1970: 700)), odometer: .init(1300),
+                                 litres: 24, fullTank: true)
+    _ = try await archive.applyMaintenance(.saveFill(start))
+    _ = try await archive.applyMaintenance(.saveFill(finish))
+    let db = try DriveSQL(url: url)
+    try db.execute("""
+        INSERT INTO trip(id,owner,started_utc,last_utc,engine_start_utc,finish)
+        VALUES(1,'a',100,600,100,'engine_stopped');
+        INSERT INTO frame(trip_id,utc,elapsed,observed,km,base_litres,litres,paired_km,paired_litres,idle,discontinuous)
+        VALUES(1,600,500,500,298,20,20,298,20,0,0);
+        """)
+    await #expect(throws: FuelCalibrationError.self) {
+        try await archive.calibrateFromJournal(startID: start.id, endID: finish.id, attestsCoverage: false)
+    }
+    let applied = try await archive.calibrateFromJournal(startID: start.id, endID: finish.id, attestsCoverage: true)
+    #expect(applied.matchedFills == 1 && applied.factor == 1.2)
+    await #expect(throws: FuelCalibrationError.self) {
+        try await archive.calibrateFromJournal(startID: start.id, endID: finish.id, attestsCoverage: true)
+    }
+}

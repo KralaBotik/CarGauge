@@ -4,6 +4,7 @@ import Foundation
 import UserNotifications
 
 @MainActor final class VehicleHealthMonitor: ObservableObject {
+    @Published private(set) var diagnosticRevision = 0
     @Published private(set) var update: MonitoringUpdate?
     @Published private(set) var openIssues: [MonitoringEvent] = []
     @Published private(set) var voltageReference: VoltageReference?
@@ -141,6 +142,7 @@ import UserNotifications
     }
 
     func recordedScan(_ report: DiagnosticReport, owner: UUID?) async {
+        diagnosticRevision &+= 1
         if let owner, activeOwner == owner, report.state == .completed { scan = (owner, report, DriveClock.now) }
         guard notifyDiagnostics, !criticalOnly, report.source == "vehicle",
               report.state == .completed,

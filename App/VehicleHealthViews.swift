@@ -113,7 +113,7 @@ struct VehicleHealthSection: View {
                 .font(.footnote).foregroundStyle(palette.muted)
         }
         .task { await health.prepare(); await load() }
-        .onChange(of: drive.diagnosticRevision) { _, _ in Task { await load() } }
+        .onChange(of: health.diagnosticRevision) { _, _ in Task { await load() } }
         .onChange(of: health.openIssues.map(\.id)) { _, _ in Task { await load() } }
         .sheet(item: $route) { item in
             switch item {

@@ -7,7 +7,6 @@ import Foundation
     @Published private(set) var fuel: FuelRate?
     @Published private(set) var supported: [DriveSignal] = []
     @Published private(set) var storageError: String?
-    @Published private(set) var diagnosticRevision = 0
     @Published private(set) var automaticReport: DiagnosticReport?
     @Published var visibleSignals: Set<DriveSignal> {
         didSet { UserDefaults.standard.set(visibleSignals.map { Int($0.rawValue) }.sorted(), forKey: Self.signalsKey) }
@@ -232,7 +231,6 @@ import Foundation
     private func store(_ report: DiagnosticReport, kind: String, owner: UUID? = nil) async {
         do {
             try await archive.saveDiagnostic(report, owner: owner)
-            diagnosticRevision &+= 1
             await health.recordedScan(report, owner: owner)
             let json = try report.json(includeRaw: true)
             var summary: String?
