@@ -5,6 +5,14 @@ public struct FuelRate: Codable, Equatable, Sendable {
     public let litresPerHour: Double
     public let baseLitresPerHour: Double
     public let calibration: Double
+    public let validUntil: Double?
+
+    init(litresPerHour: Double, baseLitresPerHour: Double, calibration: Double, validUntil: Double? = nil) {
+        self.litresPerHour = litresPerHour
+        self.baseLitresPerHour = baseLitresPerHour
+        self.calibration = calibration
+        self.validUntil = validUntil
+    }
 
     public func litresPer100km(speed: Double?) -> Double? {
         guard let speed, speed.isFinite, speed > 0 else { return nil }
@@ -39,7 +47,9 @@ public enum SpeedDensity {
         let base = airKGPerSecond * 3600 / (referenceAFR * fuelDensityKGPerLitre)
         let corrected = base * calibration
         guard corrected.isFinite, base > 0 else { return nil }
-        return FuelRate(litresPerHour: corrected, baseLitresPerHour: base, calibration: calibration)
+        let limits: [(DriveSignal, Double)] = [(.rpm, 3), (.map, 3), (.fuelStatus, 5), (.intake, 25)]
+        let expires = limits.compactMap { signal, age in readings[signal].map { $0.monotonic + age } }.min()
+        return FuelRate(litresPerHour: corrected, baseLitresPerHour: base, calibration: calibration, validUntil: expires)
     }
 
     private static func fresh(_ signal: DriveSignal, in readings: [DriveSignal: DriveReading],

@@ -5,7 +5,7 @@ public enum DriveSignal: UInt8, CaseIterable, Codable, Sendable, Identifiable {
     case shortTrim = 0x06, longTrim = 0x07, map = 0x0B, rpm = 0x0C, speed = 0x0D
     case timing = 0x0E, intake = 0x0F, throttle = 0x11, oxygenPresence = 0x13
     case oxygen1 = 0x14, oxygen2 = 0x15, standard = 0x1C, runTime = 0x1F
-    case distanceWithMIL = 0x21, fuelLevel = 0x2E, warmups = 0x30, distanceSinceClear = 0x31
+    case distanceWithMIL = 0x21, evaporativePurge = 0x2E, warmups = 0x30, distanceSinceClear = 0x31
     case catalyst = 0x3C, currentMonitors = 0x41, ecuVoltage = 0x42, absoluteLoad = 0x43
     case commandedLambda = 0x44, relativeThrottle = 0x45, ambient = 0x46
     // Local identifier outside the standard catalogue. Never sent to the ECU.
@@ -33,7 +33,7 @@ public enum DriveSignal: UInt8, CaseIterable, Codable, Sendable, Identifiable {
         case .standard: "Стандарт OBD"
         case .runTime: "Время работы двигателя по ЭБУ"
         case .distanceWithMIL: "Расстояние с включённым MIL"
-        case .fuelLevel: "Уровень топлива по ЭБУ"
+        case .evaporativePurge: "Заданная продувка адсорбера"
         case .warmups: "Прогревы после очистки DTC"
         case .distanceSinceClear: "Пробег после очистки DTC"
         case .catalyst: "Температура катализатора B1S1"
@@ -53,7 +53,7 @@ public enum DriveSignal: UInt8, CaseIterable, Codable, Sendable, Identifiable {
         case .map: "кПа"
         case .rpm: "об/мин"
         case .speed: "км/ч"
-        case .load, .absoluteLoad, .shortTrim, .longTrim, .throttle, .relativeThrottle, .fuelLevel: "%"
+        case .load, .absoluteLoad, .shortTrim, .longTrim, .throttle, .relativeThrottle, .evaporativePurge: "%"
         case .timing: "°"
         case .oxygen1, .oxygen2, .ecuVoltage, .adapterVoltage: "В"
         case .distanceWithMIL, .distanceSinceClear: "км"
@@ -80,7 +80,7 @@ public enum DriveSignal: UInt8, CaseIterable, Codable, Sendable, Identifiable {
         case .runTime, .distanceWithMIL, .distanceSinceClear: ab
         case .coolant, .intake, .ambient: a - 40
         case .rpm: ab / 4
-        case .load, .throttle, .relativeThrottle, .fuelLevel: a * 100 / 255
+        case .load, .throttle, .relativeThrottle, .evaporativePurge: a * 100 / 255
         case .absoluteLoad: ab * 100 / 255
         case .shortTrim, .longTrim: (a - 128) * 100 / 128
         case .timing: a / 2 - 64
@@ -101,7 +101,7 @@ public enum DriveSignal: UInt8, CaseIterable, Codable, Sendable, Identifiable {
         case .runTime: 8
         case .intake: 10
         case .timing, .load, .absoluteLoad, .throttle, .relativeThrottle, .shortTrim, .longTrim: 12
-        case .oxygen1, .oxygen2, .fuelLevel, .catalyst, .ambient: 30
+        case .oxygen1, .oxygen2, .evaporativePurge, .catalyst, .ambient: 30
         default: 90
         }
     }
@@ -203,5 +203,19 @@ public enum DriveClock {
     public static var now: Double {
         let duration = origin.duration(to: .now).components
         return Double(duration.seconds) + Double(duration.attoseconds) / 1e18
+    }
+}
+
+/// Timeout invalidates the transport but does not quarantine primary telemetry.
+public struct OptionalPollCooldown: Sendable {
+    private var deferred: [String: Double] = [:]
+    public init() {}
+
+    public func allows(_ command: String, at time: Double) -> Bool {
+        deferred[command].map { time >= $0 } ?? true
+    }
+
+    public mutating func timedOut(_ command: String, at time: Double) {
+        deferred[command] = time + 60
     }
 }

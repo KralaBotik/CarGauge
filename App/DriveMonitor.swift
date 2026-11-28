@@ -5,7 +5,6 @@ import Foundation
 @MainActor final class DriveMonitor: ObservableObject {
     @Published private(set) var readings: [DriveSignal: DriveReading] = [:]
     @Published private(set) var fuel: FuelRate?
-    @Published private(set) var fuelAt: Double?
     @Published private(set) var supported: [DriveSignal] = []
     @Published private(set) var storageError: String?
     @Published private(set) var automaticReport: DiagnosticReport?
@@ -16,6 +15,8 @@ import Foundation
     let archive: TelemetryArchive
     let isFixture: Bool
     private var liveOwner: UUID?
+    private var cooldownOwner: UUID?
+    private var cooldown = OptionalPollCooldown()
     private var plan = VehiclePollPlan()
     private var startEvidence = EngineStartEvidence()
     private var nextPage: OBDSupportPage? = .pids01To20
@@ -23,6 +24,8 @@ import Foundation
     private var lastAutomatic: ContinuousClock.Instant?
     private var scheduledOnLink = false
     private var pendingStart: Date?
+    private var connectedAt: Date?
+    private var previousRuntime: Double?
     private var lastVoltage: Double?
     private var currentCalibration: Double = 1
     private var lastThermalLevel: ThermalLevel?
@@ -45,6 +48,8 @@ import Foundation
         }
     }
 
+    var targetProfileConfirmed: Bool { plan.isTargetProfile }
+
     var masks: [OBDSupportPage: String] {
         var result: [OBDSupportPage: String] = [:]
         for (page, base) in [(OBDSupportPage.pids01To20, UInt8(0)), (.pids21To40, UInt8(32)), (.pids41To60, UInt8(64))] {
@@ -53,17 +58,22 @@ import Foundation
         return result
     }
 
-    func didConnect(owner: UUID) async {
+    func didConnect(owner: UUID, at date: Date) async {
         liveOwner = owner
+        if cooldownOwner != owner {
+            cooldown = OptionalPollCooldown()
+            cooldownOwner = owner
+        }
         plan = VehiclePollPlan()
         startEvidence = EngineStartEvidence()
         nextPage = .pids01To20
         supported = []
         readings = [:]
         fuel = nil
-        fuelAt = nil
         lastVoltage = nil
         pendingStart = nil
+        connectedAt = date
+        previousRuntime = nil
         lastThermalLevel = nil
         automatic = nil
         scheduledOnLink = false
@@ -85,14 +95,20 @@ import Foundation
     func capture(owner: UUID, client: ELM327Client, background: Bool, thermal: ThermalLevel) async throws {
         guard liveOwner == owner else { return }
         var batch = Array(client.latestDriveReadings.values)
+        if client.latestDriveReadings[.rpm] == nil {
+            batch.append(DriveReading(signal: .rpm, value: nil, bytes: [], timestamp: .now,
+                                      monotonic: DriveClock.now, quality: .noData))
+        }
         for item in batch { readings[item.signal] = item }
         if let voltage = batch.first(where: { $0.signal == .ecuVoltage || $0.signal == .adapterVoltage }) {
             lastVoltage = voltage.monotonic
         }
 
         var linkFailure: Error?
+        var optionalCommand: String?
         do {
-            if !background, let page = nextPage {
+            if !background, let page = nextPage, cooldown.allows(page.rawValue, at: DriveClock.now) {
+                optionalCommand = page.rawValue
                 let result = try await client.probeSupport(page)
                 guard liveOwner == owner else { return }
                 nextPage = nil
@@ -109,13 +125,17 @@ import Foundation
                 }
             }
             let requests = plan.next(at: DriveClock.now, background: background)
-            for signal in requests {
+            for signal in requests where cooldown.allows(signal.command, at: DriveClock.now) {
+                optionalCommand = signal.command
                 let reading = try await client.readDriveSignal(signal)
                 guard liveOwner == owner else { return }
                 batch.append(reading)
                 readings[signal] = reading
             }
         } catch {
+            if error as? OBDError == .timeout, let command = optionalCommand, liveOwner == owner {
+                cooldown.timedOut(command, at: DriveClock.now)
+            }
             linkFailure = error
         }
         try Task.checkCancellation()
@@ -124,22 +144,35 @@ import Foundation
         let now = DriveClock.now
         let rpm = batch.first { $0.signal == .rpm && $0.quality == .received }
         let speed = batch.first { $0.signal == .speed && $0.quality == .received }
-        let runtime = batch.first { $0.signal == .runTime && $0.quality == .received }
-        if runtime != nil, let result = startEvidence.observe(runtime, rpm: rpm) { pendingStart = result }
+        let runtime = batch.first { $0.signal == .runTime }
+        if rpm?.value == 0 {
+            startEvidence = EngineStartEvidence()
+            pendingStart = nil
+        } else if let runtime {
+            if let value = runtime.value, runtime.quality == .received,
+               let previousRuntime, value < previousRuntime {
+                startEvidence = EngineStartEvidence()
+                pendingStart = nil
+                do { try await archive.end(owner: owner, reason: "runtime_reset", mayResume: true) }
+                catch { storageError = error.localizedDescription }
+                guard liveOwner == owner, !Task.isCancelled else { return }
+            }
+            if runtime.quality == .received { previousRuntime = runtime.value }
+            if let result = startEvidence.observe(runtime, rpm: rpm) { pendingStart = result }
+        }
         let estimate = linkFailure == nil && batch.contains { $0.signal == .map && $0.quality == .received }
             ? SpeedDensity.estimate(readings: readings, at: now, targetProfile: plan.isTargetProfile,
                                    calibration: currentCalibration)
             : nil
         fuel = estimate
-        fuelAt = estimate == nil ? nil : now
 
         let frame = TripFrame(timestamp: .now, monotonic: now, readings: batch, rpm: rpm?.value,
                               speed: speed?.isFresh(at: now, within: 3) == true ? speed?.value : nil,
-                              fuel: estimate, estimatedEngineStart: pendingStart)
+                              fuel: estimate, estimatedEngineStart: pendingStart, connectedAt: connectedAt)
         do {
             try await archive.record(owner: owner, frame: frame)
             if thermal != lastThermalLevel && (thermal != .normal || lastThermalLevel != nil) {
-                try await archive.addEvent(kind: "temperature_state", payload: thermal.rawValue)
+                try await archive.addEvent(kind: "temperature_state", payload: thermal.rawValue, owner: owner)
             }
             if liveOwner == owner {
                 lastThermalLevel = thermal
@@ -159,7 +192,8 @@ import Foundation
         catch { storageError = error.localizedDescription }
     }
 
-    func advanceDiagnostics(owner: UUID, client: ELM327Client, adapter: String?, firstObservation: Date?) async throws {
+    func advanceDiagnostics(owner: UUID, client: ELM327Client, adapter: String?, firstObservation: Date?,
+                            source: DataSource) async throws {
         guard liveOwner == owner else { return }
         if automatic == nil {
             let interval: Duration = scheduledOnLink ? .seconds(15 * 60) : .seconds(60)
@@ -167,22 +201,22 @@ import Foundation
             lastAutomatic = .now
             scheduledOnLink = true
             automatic = DiagnosticSurvey(firstObservedCoolantAt: firstObservation, adapterName: adapter,
-                                         adapterIdentification: client.adapterIdentification, scope: .codesOnly)
+                                         adapterIdentification: client.adapterIdentification, source: source, scope: .codesOnly)
         }
         guard let survey = automatic else { return }
         do {
             try await survey.performNext(with: client)
         } catch {
-            if liveOwner == owner { await finalizeAutomatic(survey) }
+            if liveOwner == owner { await finalizeAutomatic(survey, owner: owner) }
             throw error
         }
-        if liveOwner == owner, survey.report.state != .running { await finalizeAutomatic(survey) }
+        if liveOwner == owner, survey.report.state != .running { await finalizeAutomatic(survey, owner: owner) }
     }
 
-    private func finalizeAutomatic(_ survey: DiagnosticSurvey) async {
+    private func finalizeAutomatic(_ survey: DiagnosticSurvey, owner: UUID) async {
         automatic = nil
         automaticReport = survey.report
-        await store(survey.report, kind: "automatic_dtc")
+        await store(survey.report, kind: "automatic_dtc", owner: owner)
     }
 
     func saveManual(_ report: DiagnosticReport) async {
@@ -190,10 +224,10 @@ import Foundation
         await store(report, kind: "manual_survey")
     }
 
-    private func store(_ report: DiagnosticReport, kind: String) async {
+    private func store(_ report: DiagnosticReport, kind: String, owner: UUID? = nil) async {
         do {
             let json = try report.json(includeRaw: true)
-            try await archive.addEvent(kind: kind, payload: String(decoding: json, as: UTF8.self), timestamp: report.startedAt)
+            var summary: String?
             if kind == "automatic_dtc" {
                 let statuses = DiagnosticCodeStatus.allCases.map { status in
                     let group = report.codes.first { $0.status == status }
@@ -203,8 +237,10 @@ import Foundation
                     return "\(status.title) · \(state)"
                 }.joined(separator: "\n")
                 let date = report.startedAt.formatted(date: .abbreviated, time: .shortened)
-                try await archive.addEvent(kind: "dtc_summary", payload: "\(date)\n\(statuses)")
+                summary = "\(date)\n\(statuses)"
             }
+            try await archive.addEvent(kind: kind, payload: String(decoding: json, as: UTF8.self), timestamp: report.startedAt,
+                                       owner: owner, summary: summary)
         } catch {
             storageError = error.localizedDescription
         }
@@ -221,10 +257,9 @@ import Foundation
         liveOwner = nil
         readings = [:]
         fuel = nil
-        fuelAt = nil
         if let survey = automatic {
             survey.interrupt(reason)
-            await finalizeAutomatic(survey)
+            await finalizeAutomatic(survey, owner: owner)
         }
         do { try await archive.end(owner: owner, reason: reason, mayResume: mayResume) }
         catch { storageError = error.localizedDescription }

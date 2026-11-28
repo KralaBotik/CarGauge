@@ -92,3 +92,17 @@ import Testing
         #expect(ELM327Client.allowedCommands.contains(command))
     }
 }
+
+@MainActor @Test func automaticDiagnosticRecordsOnlyDTCsAndDoesNotTurnSilenceIntoAnEmptyResult() async throws {
+    let fixture = SurveyFixture(["ATDPN": "A6", "03": "4300", "07": "4700", "0A": "NO DATA"])
+    let work = DiagnosticSurvey(firstObservedCoolantAt: nil, adapterName: "CI", source: .simulator, scope: .codesOnly)
+    let client = ELM327Client(transport: fixture)
+    for _ in 0..<6 { try await work.performNext(with: client) }
+    #expect(fixture.sent == ["ATDPN", "03", "07", "0A"])
+    #expect(work.report.state == .completed)
+    #expect(work.report.source == "test_fixture")
+    #expect(work.report.codes.first { $0.status == .stored }?.replyGroups == [[]])
+    #expect(work.report.codes.first { $0.status == .pending }?.replyGroups == [[]])
+    #expect(work.report.codes.first { $0.status == .permanent } == nil)
+    #expect(work.report.exchanges.last?.outcome == .noData)
+}

@@ -8,9 +8,10 @@ public struct TripFrame: Sendable {
     public let speed: Double?
     public let fuel: FuelRate?
     public let estimatedEngineStart: Date?
+    public let connectedAt: Date?
 
     public init(timestamp: Date, monotonic: Double, readings: [DriveReading], rpm: Double?, speed: Double?,
-                fuel: FuelRate?, estimatedEngineStart: Date? = nil) {
+                fuel: FuelRate?, estimatedEngineStart: Date? = nil, connectedAt: Date? = nil) {
         self.timestamp = timestamp
         self.monotonic = monotonic
         self.readings = readings
@@ -18,6 +19,7 @@ public struct TripFrame: Sendable {
         self.speed = speed
         self.fuel = fuel
         self.estimatedEngineStart = estimatedEngineStart
+        self.connectedAt = connectedAt
     }
 }
 
@@ -63,6 +65,7 @@ public struct RecordedTrip: Identifiable, Sendable {
     public let finishReason: String?
     public let elapsedSeconds: Double
     public let estimatedEngineStart: Date?
+    public let connectedAt: Date?
     public let observedEngineSeconds: Double
     public let distanceKm: Double?
     public let distanceSeconds: Double
@@ -95,13 +98,15 @@ public struct FuelCalibrationState: Sendable {
 }
 
 public enum FuelCalibrationError: LocalizedError {
-    case invalid, coverage, alreadyStarted, noStart
+    case invalid, coverage, alreadyStarted, noStart, activeEngine, unobserved
     public var errorDescription: String? {
         switch self {
         case .invalid: "Проверьте литры и показания одометра полной заправки."
         case .coverage: "Мало данных между заправками. Нужно покрыть не менее 90% пробега и 90% наблюдаемой работы двигателя."
         case .alreadyStarted: "Начальная заправка уже записана."
         case .noStart: "Сначала отметьте полную заправку."
+        case .activeEngine: "Завершите текущую запись с остановленным двигателем."
+        case .unobserved: "В интервале есть поездки с неизвестной границей работы двигателя."
         }
     }
 }

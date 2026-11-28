@@ -11,7 +11,7 @@ struct DriveDashboardReadings: View {
             GaugeSection(title: "Телеметрия") {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     let now = DriveClock.now
-                    let rate = drive.fuelAt.map { now - $0 <= 4 } == true ? drive.fuel : nil
+                    let rate = drive.fuel?.validUntil.map { now <= $0 } == true ? drive.fuel : nil
                     let speed = drive.readings[.speed].flatMap { $0.isFresh(at: now, within: 3) ? $0.value : nil }
                     LabeledContent("Расход · расчёт", value: driveValue(rate?.litresPerHour, unit: "л/ч"))
                         .accessibilityElement(children: .ignore)
@@ -20,6 +20,12 @@ struct DriveDashboardReadings: View {
                     LabeledContent("Расход в движении", value: driveValue(rate?.litresPer100km(speed: speed), unit: "л/100 км"))
                     Text("Speed Density · экспериментальная оценка")
                         .font(.caption).foregroundStyle(palette.muted)
+                    if rate == nil {
+                        Text(drive.targetProfileConfirmed
+                             ? "Оценка доступна при свежих данных и штатном замкнутом контуре."
+                             : "Ожидание подтверждённого профиля G4FC.")
+                            .font(.caption).foregroundStyle(palette.muted)
+                    }
                     ForEach(drive.supported.filter { drive.visibleSignals.contains($0) }) { signal in
                         LabeledContent(signal.title, value: liveValue(signal, at: now))
                     }
@@ -35,18 +41,24 @@ struct DriveDashboardReadings: View {
 
     private func liveValue(_ signal: DriveSignal, at time: Double) -> String {
         guard let reading = drive.readings[signal], reading.isFresh(at: time, within: signal.displayLifetime) else { return "—" }
-        if signal == .fuelStatus {
-            return switch reading.bytes.first {
-            case 1: "Открытый контур · прогрев"
-            case 2: "Замкнутый контур"
-            case 4: "Открытый контур · режим движения"
-            case 8, 16: "Ограниченный режим"
-            default: "Неясный статус"
-            }
+        if signal == .fuelStatus, reading.bytes.count == 2 {
+            let first = fuelSystemStatus(reading.bytes[0])
+            let second = reading.bytes[1]
+            return second == 0 ? first : "1 · \(first), 2 · \(fuelSystemStatus(second))"
         }
         if let value = reading.value { return driveValue(value, unit: signal.unit) }
         return reading.bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
+    private func fuelSystemStatus(_ status: UInt8) -> String {
+        switch status {
+        case 1: "Условия замкнутого контура ещё не выполнены"
+        case 2: "Замкнутый контур"
+        case 4: "Открытый контур · режим движения"
+        case 8, 16: "Ограниченный режим"
+        default: "Неясный статус"
+        }
+    }
+
 }
 
 struct DriveHistorySection: View {
@@ -61,7 +73,7 @@ struct DriveHistorySection: View {
 
     var body: some View {
         GaugeSection(title: "История поездок", headerID: "recorded-trips") {
-            Text("Запись начинается с первого подтверждённого наблюдения двигателя.")
+            Text("Запись начинается после первого ответа двигателя. Время без подтверждённых оборотов отмечается отдельно.")
                 .font(.footnote).foregroundStyle(palette.muted)
             if trips.isEmpty { Text("Здесь появятся сохранённые поездки.").font(.subheadline) }
             ForEach(trips) { trip in
@@ -141,10 +153,10 @@ private struct DriveTripDetail: View {
         .task(id: channels) {
             do {
                 repeat {
-                    guard let updated = try await drive.archive.trip(id: trip.id) else { break }
-                    plot = try await drive.archive.plot(tripID: trip.id, channels: channels)
-                    trip = updated
-                    if updated.finishReason != nil { break }
+                    guard let snapshot = try await drive.archive.detail(tripID: trip.id, channels: channels) else { break }
+                    plot = snapshot.plot
+                    trip = snapshot.trip
+                    if snapshot.trip.finishReason != nil { break }
                     try await Task.sleep(for: .seconds(5))
                 } while !Task.isCancelled
             } catch is CancellationError {
@@ -169,6 +181,9 @@ private struct DriveTripDetail: View {
             LabeledContent("Покрытие расстояния", value: driveDuration(trip.distanceSeconds))
             if let start = trip.estimatedEngineStart {
                 LabeledContent("Оценка запуска по 011F", value: start.formatted(date: .omitted, time: .standard))
+                if let connectedAt = trip.connectedAt, start < connectedAt {
+                    LabeledContent("Работа до BLE · оценка", value: driveDuration(connectedAt.timeIntervalSince(start)))
+                }
             }
             Text("Телеметрия и топливо до начала записи неизвестны. Расход рассчитан методом Speed Density.")
                 .font(.footnote).foregroundStyle(palette.muted)
@@ -276,6 +291,7 @@ private struct DriveCalibrationView: View {
     @State private var litres = ""
     @State private var message: String?
     @State private var confirmsRestart = false
+    @State private var confirmsCoverage = false
 
     var body: some View {
         GaugePage(spacing: GaugeSpacing.section) {
@@ -292,11 +308,13 @@ private struct DriveCalibrationView: View {
                 TextField("Одометр, км", text: $odometer).keyboardType(.decimalPad)
                 if state?.initialOdometer != nil {
                     TextField("Долито до полного, л", text: $litres).keyboardType(.decimalPad)
+                    Toggle("Я записал все работы двигателя между заправками", isOn: $confirmsCoverage)
                 }
                 Button(state?.initialOdometer == nil ? "Отметить полный бак" : "Учесть полную заправку") {
                     Task { await save(restart: false) }
                 }
                 .buttonStyle(GaugeActionStyle())
+                .disabled(state?.initialOdometer != nil && !confirmsCoverage)
                 if state?.initialOdometer != nil {
                     Button("Начать новый интервал") { confirmsRestart = true }.buttonStyle(GaugeActionStyle())
                 }
@@ -331,13 +349,14 @@ private struct DriveCalibrationView: View {
                     message = FuelCalibrationError.invalid.errorDescription
                     return
                 }
-                changed = try await drive.archive.finishCalibration(odometer: km, litres: actual)
+                changed = try await drive.archive.finishCalibration(odometer: km, litres: actual, attestsCoverage: confirmsCoverage)
             }
             state = changed
             drive.settingCalibration(changed)
             message = "Заправка сохранена."
             odometer = ""
             litres = ""
+            confirmsCoverage = false
         } catch {
             message = error.localizedDescription
         }

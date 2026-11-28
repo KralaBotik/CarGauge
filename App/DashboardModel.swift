@@ -492,6 +492,8 @@ enum MeasurementPhase {
         let startedAt = ContinuousClock.now
         var engine = EngineIdleMonitor()
         var lastCapturedCoolant: Date?
+        var rpmRetryAt: ContinuousClock.Instant? =
+            supplementaryRecovery.skippedSensors.contains(.rpm) ? .now.advanced(by: .seconds(30)) : nil
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
         var engineFixtureTime = Date(timeIntervalSinceReferenceDate: 0)
@@ -517,6 +519,7 @@ enum MeasurementPhase {
                 adapterStage = "Связь по Bluetooth"
                 try await link.connect()
                 guard !Task.isCancelled, id == runID else { return }
+                let connectedAt = Date()
                 adapterStage = "Проверка ELM327 и ЭБУ"
                 try await client.initialize(voltageSource: supplementaryRecovery.initialVoltageSource)
                 guard !Task.isCancelled, id == runID else { return }
@@ -524,7 +527,7 @@ enum MeasurementPhase {
                 firstObservedOnLink = nil
                 lastCapturedCoolant = nil
                 if recordsDrive {
-                    await drive.didConnect(owner: id)
+                    await drive.didConnect(owner: id, at: connectedAt)
                     guard !Task.isCancelled, id == runID else { return }
                 }
                 while !Task.isCancelled && id == runID {
@@ -567,6 +570,10 @@ enum MeasurementPhase {
                     startAutomaticActivityIfPossible()
                     presentation.publish(coolant: reading, source: source, level: level)
                     refreshActivityState()
+                    if let retryAt = rpmRetryAt, ContinuousClock.now >= retryAt {
+                        supplementaryRecovery.allowRPMRetry()
+                        rpmRetryAt = nil
+                    }
                     let readVoltage = !recordsDrive || drive.shouldReadVoltage(at: DriveClock.now)
                     var snapshot = try await client.readSupplementary(source: source, coolant: reading,
                         skipping: supplementaryRecovery.skippedSensors, includeVoltage: readVoltage)
@@ -612,7 +619,7 @@ enum MeasurementPhase {
                         guard !Task.isCancelled, id == runID else { return }
                     } else if recordsDrive && sceneIsActive {
                         try await drive.advanceDiagnostics(owner: id, client: client, adapter: configuredName,
-                                                           firstObservation: firstObservedOnLink)
+                                                           firstObservation: firstObservedOnLink, source: source)
                     }
                     try await Task.sleep(for: pollDelay)
                 }
@@ -637,6 +644,7 @@ enum MeasurementPhase {
                 engine.interrupt()
                 if let timeout = error as? SupplementaryTimeout {
                     supplementaryRecovery.record(timeout)
+                    if timeout == .rpm { rpmRetryAt = .now.advanced(by: .seconds(30)) }
                 }
                 #if DEBUG
                 let shouldRetry = source == .simulator ? simulatedBreak : autoConnect && pendingAdapterID == nil && targetID != nil

@@ -16,6 +16,7 @@ private func inputs(map: Double = 30, intake: Double = 25, rpm: Double = 850) ->
 @Test func speedDensityAgreesWithIndependentSIReference() throws {
     let idle = try #require(SpeedDensity.estimate(readings: inputs(), at: 10, targetProfile: true))
     #expect(abs(idle.litresPerHour - 1.111243) < 0.000002)
+    #expect(idle.validUntil == 13)
     #expect(idle.litresPer100km(speed: 0) == nil)
     #expect(idle.litresPer100km(speed: nil) == nil)
     let moving = try #require(SpeedDensity.estimate(readings: inputs(map: 43, intake: 28, rpm: 2200),
@@ -79,10 +80,11 @@ private func inputs(map: Double = 30, intake: Double = 25, rpm: Double = 850) ->
 }
 
 private func frame(_ tick: Double, speed: Double? = 36, rpm: Double? = 850, rate: Double? = 3.6,
-                   wall: Double? = nil, duplicate: Bool = false) -> TripFrame {
+                   wall: Double? = nil, duplicate: Bool = false, engineStart: Double? = nil) -> TripFrame {
     let sample = reading(.coolant, 88, at: tick, bytes: [128], date: wall)
     return TripFrame(timestamp: sample.timestamp, monotonic: tick, readings: duplicate ? [sample, sample] : [sample],
-                     rpm: rpm, speed: speed, fuel: rate.map { FuelRate(litresPerHour: $0, baseLitresPerHour: $0, calibration: 1) })
+                     rpm: rpm, speed: speed, fuel: rate.map { FuelRate(litresPerHour: $0, baseLitresPerHour: $0, calibration: 1) },
+                     estimatedEngineStart: engineStart.map(Date.init(timeIntervalSince1970:)))
 }
 
 @Test func integrationUsesOnlyMonotonicCommonCoverageAndSupportsIdle() throws {
@@ -118,19 +120,19 @@ private func frame(_ tick: Double, speed: Double? = 36, rpm: Double? = 850, rate
         try await database.record(owner: owner, frame: frame(10))
         try await database.record(owner: owner, frame: frame(12))
         let trip = try #require(await database.recentTrips().first)
-        #expect(trip.observedEngineSeconds == 4)
-        #expect(abs((trip.distanceKm ?? 0) - 0.04) < 1e-12)
+        #expect(trip.observedEngineSeconds == 2)
+        #expect(abs((trip.distanceKm ?? 0) - 0.02) < 1e-12)
         #expect(trip.finishReason == nil)
         let plot = try await database.plot(tripID: trip.id, channels: [.coolant])
-        #expect(plot.gaps == 1)
+        #expect(plot.gaps == 2)
         #expect(plot.series[.coolant]?.map(\.time) == [0, 2, 9, 11])
-        #expect(plot.fuel.map(\.segment) == [1, 1, 2, 2])
+        #expect(plot.fuel.map(\.segment) == [1, 2, 3, 3])
         #expect(try await database.databaseSize() > 0)
     }
     let reopened = TelemetryArchive(url: url)
     let trip = try #require(await reopened.recentTrips().first)
     #expect(trip.finishReason == "app_interrupted")
-    #expect(trip.observedEngineSeconds == 4)
+    #expect(trip.observedEngineSeconds == 2)
     #expect(abs((trip.averageLitresPer100km ?? 0) - 10) < 1e-12)
     try await reopened.record(owner: UUID(), frame: frame(1))
     #expect(try await reopened.recentTrips().count == 2)
@@ -142,15 +144,98 @@ private func frame(_ tick: Double, speed: Double? = 36, rpm: Double? = 850, rate
     defer { try? FileManager.default.removeItem(at: root) }
     let database = TelemetryArchive(url: root.appending(path: "history.sqlite"))
     _ = try await database.startCalibration(odometer: 10, at: Date(timeIntervalSince1970: 100_000))
-    for time in [1.0, 3, 5] { try await database.record(owner: owner, frame: frame(time)) }
+    for time in [1.0, 3, 5] { try await database.record(owner: owner, frame: frame(time, engineStart: 100_001)) }
     try await database.record(owner: owner, frame: frame(7, rpm: 0, rate: nil))
-    let end = Date(timeIntervalSince1970: 100_008)
+    try await database.record(owner: owner, frame: frame(8, rpm: 0, rate: nil))
+    let end = Date(timeIntervalSince1970: 100_010)
     await #expect(throws: FuelCalibrationError.coverage) {
-        try await database.finishCalibration(odometer: 11, litres: 0.008, at: end)
+        try await database.finishCalibration(odometer: 11, litres: 0.008, at: end, attestsCoverage: true)
     }
-    let calibration = try await database.finishCalibration(odometer: 10.04, litres: 0.008, at: end)
+    let calibration = try await database.finishCalibration(odometer: 10.04, litres: 0.008, at: end, attestsCoverage: true)
     #expect(calibration.matchedFills == 1)
     #expect(abs(calibration.factor - 2) < 1e-12)
     #expect(calibration.initialOdometer == 10.04)
     #expect(abs((try await database.recentTrips().first?.litres ?? 0) - 0.004) < 1e-12)
+}
+
+@Test func calibrationRejectsUnobservedWarmupAndInterruptedZeroDistance() async throws {
+    let owner = UUID()
+    let root = FileManager.default.temporaryDirectory.appending(path: owner.uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let database = TelemetryArchive(url: root.appending(path: "history.sqlite"))
+    let before = Date(timeIntervalSince1970: 99_000)
+    let after = Date(timeIntervalSince1970: 100_050)
+    _ = try await database.startCalibration(odometer: 10, at: before)
+    for time in [1.0, 3, 5] { try await database.record(owner: owner, frame: frame(time, engineStart: 99_900)) }
+    try await database.record(owner: owner, frame: frame(6, rpm: 0, rate: nil))
+    try await database.record(owner: owner, frame: frame(7, rpm: 0, rate: nil))
+    await #expect(throws: FuelCalibrationError.coverage) {
+        try await database.finishCalibration(odometer: 10.04, litres: 0.008, at: after, attestsCoverage: true)
+    }
+    try await database.record(owner: owner, frame: frame(15, speed: 0, engineStart: 100_015))
+    try await database.end(owner: owner, reason: "link_lost")
+    await #expect(throws: FuelCalibrationError.unobserved) {
+        try await database.finishCalibration(odometer: 10.04, litres: 0.008, at: after, attestsCoverage: true)
+    }
+    #expect(try await database.calibration().factor == 1)
+}
+
+@Test func pendingStopRetriesAfterSQLiteBusyWithoutBridgingNewLink() async throws {
+    let owner = UUID()
+    let root = FileManager.default.temporaryDirectory.appending(path: owner.uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appending(path: "history.sqlite")
+    let archive = TelemetryArchive(url: url)
+    try await archive.record(owner: owner, frame: frame(1))
+    let artificialWriter = try DriveSQL(url: url)
+    try artificialWriter.execute("BEGIN IMMEDIATE")
+    await #expect(throws: (any Error).self) {
+        try await archive.end(owner: owner, reason: "link_lost", mayResume: true)
+    }
+    try artificialWriter.execute("ROLLBACK")
+    try await archive.record(owner: owner, frame: frame(2))
+    try await archive.record(owner: owner, frame: frame(4))
+    let trips = try await archive.recentTrips()
+    #expect(trips.count == 2)
+    #expect(trips.last?.finishReason == "link_lost")
+    #expect(trips.last?.litres == nil)
+    #expect(trips.first?.observedEngineSeconds == 2)
+}
+
+@Test func isolatedZeroDoesNotCloseTripAndCoolantCanBeRecordedWithoutRPM() async throws {
+    let owner = UUID()
+    let root = FileManager.default.temporaryDirectory.appending(path: owner.uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let archive = TelemetryArchive(url: root.appending(path: "history.sqlite"))
+    try await archive.record(owner: owner, frame: frame(1, rpm: nil, rate: nil))
+    try await archive.record(owner: owner, frame: frame(2))
+    try await archive.record(owner: owner, frame: frame(3, rpm: 0, rate: nil))
+    try await archive.record(owner: owner, frame: frame(4))
+    let trips = try await archive.recentTrips()
+    #expect(trips.count == 1)
+    #expect(trips.first?.finishReason == nil)
+    #expect(trips.first?.litres == nil)
+    if let id = trips.first?.id {
+        let plot = try await archive.plot(tripID: id, channels: [.coolant])
+        #expect(plot.series[.coolant]?.count == 4)
+    }
+    try await archive.record(owner: owner, frame: frame(5, rpm: 0, rate: nil))
+    try await archive.record(owner: owner, frame: frame(6, rpm: 0, rate: nil))
+    #expect(try await archive.recentTrips().first?.finishReason == "engine_stopped")
+}
+
+@Test func optionalTimeoutDefersOnlyItsOwnRequestAcrossResetOfPollPlan() {
+    var cooldown = OptionalPollCooldown()
+    cooldown.timedOut("0100", at: 8)
+    #expect(!cooldown.allows("0100", at: 67.999))
+    #expect(cooldown.allows("0100", at: 68))
+    #expect(cooldown.allows("0105", at: 9))
+    #expect(cooldown.allows("010C", at: 9))
+    #expect(cooldown.allows("0120", at: 9))
+}
+
+@Test func evapCommandIsNotTankLevel() throws {
+    let sample = try DriveReading.decode(.evaporativePurge, response: "412E80>", timestamp: .now, monotonic: 1)
+    #expect(sample.value == 128 * 100.0 / 255)
+    #expect(!VehiclePollPlan.advertised(base: 32, mask: 0x80058011).contains(0x2F))
 }

@@ -4,7 +4,7 @@ public enum SupplementarySensor: Hashable, Sendable {
     case rpm, voltage
 }
 
-public enum SupplementaryTimeout: LocalizedError, Sendable {
+public enum SupplementaryTimeout: LocalizedError, Equatable, Sendable {
     case rpm, ecuVoltage, adapterVoltage
 
     public var sensor: SupplementarySensor { self == .rpm ? .rpm : .voltage }
@@ -24,6 +24,8 @@ public struct SupplementaryRecovery: Sendable {
     public private(set) var skippedSensors: Set<SupplementarySensor> = []
 
     public init() {}
+
+    public mutating func allowRPMRetry() { skippedSensors.remove(.rpm) }
 
     public mutating func record(_ timeout: SupplementaryTimeout) {
         if timeout == .ecuVoltage {
