@@ -133,6 +133,9 @@ final class DashboardUITests: XCTestCase {
         trip.tap()
         let details = app.descendants(matching: .any).matching(identifier: "trip-details").firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: responseTimeout))
+        let volume = app.descendants(matching: .any).matching(identifier: "trip-fuel-volume").firstMatch
+        XCTAssertTrue(volume.waitForLabel(matching: ".*мл.*", timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].firstMatch.exists)
         snapshot(app, named: "17-Recorded-Trip")
     }
 

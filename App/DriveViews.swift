@@ -136,6 +136,9 @@ private struct DriveTripDetail: View {
             Button("Закрыть", action: { dismiss() }).buttonStyle(GaugeActionStyle())
             GaugeHeading(title: "Замеры поездки", subtitle: trip.startedAt.formatted(date: .abbreviated, time: .shortened))
                 .accessibilityIdentifier("trip-details")
+            #if DEBUG
+            if drive.isFixture { SourceIndicator(source: .simulator) }
+            #endif
             metrics
             if let plot {
                 channelMenu
@@ -173,10 +176,13 @@ private struct DriveTripDetail: View {
             LabeledContent("Подтверждённая работа двигателя", value: driveDuration(trip.observedEngineSeconds))
             LabeledContent("Пробег по скорости ЭБУ", value: driveValue(trip.distanceKm, unit: "км"))
             LabeledContent("Максимальная скорость", value: driveValue(trip.peakSpeed, unit: "км/ч"))
-            LabeledContent("Топливо · оценка", value: driveValue(trip.litres, unit: "л"))
+            LabeledContent("Топливо · оценка", value: driveVolume(trip.litres))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text("Топливо, оценка, \(driveVolume(trip.litres))"))
+                .accessibilityIdentifier("trip-fuel-volume")
             LabeledContent("Средний · совпадающее покрытие", value: driveValue(trip.averageLitresPer100km, unit: "л/100 км"))
             LabeledContent("Холостой ход", value: trip.distanceSeconds > 0 ? driveDuration(trip.idleSeconds) : "—")
-            LabeledContent("На холостом ходу · оценка", value: driveValue(trip.idleLitres, unit: "л"))
+            LabeledContent("На холостом ходу · оценка", value: driveVolume(trip.idleLitres))
             LabeledContent("Покрытие расчёта топлива", value: driveDuration(trip.fuelSeconds))
             LabeledContent("Покрытие расстояния", value: driveDuration(trip.distanceSeconds))
             if let start = trip.estimatedEngineStart {
@@ -300,6 +306,9 @@ private struct DriveCalibrationView: View {
         GaugePage(spacing: GaugeSpacing.section) {
             Button("Закрыть") { dismiss() }.buttonStyle(GaugeActionStyle())
             GaugeHeading(title: "Калибровка расхода", subtitle: "Полный бак до и после интервала поездок.")
+            #if DEBUG
+            if drive.isFixture { SourceIndicator(source: .simulator) }
+            #endif
             GaugeSection(title: "Заправка") {
                 if let state {
                     LabeledContent("Множитель будущих оценок", value: driveValue(state.factor, unit: "×", precision: 3))
@@ -385,6 +394,13 @@ private func driveValue(_ value: Double?, unit: String, precision: Int = 1) -> S
     guard let value, value.isFinite else { return "—" }
     let text = value.formatted(.number.precision(.fractionLength(0...precision)))
     return unit.isEmpty ? text : "\(text) \(unit)"
+}
+
+private func driveVolume(_ litres: Double?) -> String {
+    guard let litres, litres.isFinite, litres >= 0 else { return "—" }
+    if litres > 0 && litres < 0.001 { return "Менее 1 мл" }
+    if litres > 0 && litres < 0.1 { return driveValue(litres * 1000, unit: "мл", precision: 0) }
+    return driveValue(litres, unit: "л")
 }
 
 private func driveDuration(_ seconds: Double) -> String {
