@@ -120,6 +120,25 @@ final class DashboardUITests: XCTestCase {
         }
     }
 
+    @MainActor func testCalculatedFuelAndSQLiteTripAreVisible() {
+        let app = launch(options: ["--telemetry-history-fixture"])
+        let fuel = app.descendants(matching: .any).matching(identifier: "live-fuel-rate").firstMatch
+        XCTAssertTrue(fuel.waitForExistence(timeout: responseTimeout))
+        for _ in 0..<5 where !fuel.isHittable { app.swipeUp() }
+        XCTAssertTrue(fuel.waitForLabel(matching: "(?s).*[0-9].*л/ч.*", timeout: responseTimeout))
+        app.buttons["history-nav"].tap()
+        let trip = app.buttons.matching(identifier: "recorded-trip").firstMatch
+        XCTAssertTrue(trip.waitForExistence(timeout: responseTimeout))
+        for _ in 0..<5 where !trip.isHittable { app.swipeUp() }
+        trip.tap()
+        let details = app.descendants(matching: .any).matching(identifier: "trip-details").firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: responseTimeout))
+        let volume = app.descendants(matching: .any).matching(identifier: "trip-fuel-volume").firstMatch
+        XCTAssertTrue(volume.waitForLabel(matching: ".*мл.*", timeout: responseTimeout))
+        XCTAssertTrue(app.staticTexts["source-indicator"].firstMatch.exists)
+        snapshot(app, named: "17-Recorded-Trip")
+    }
+
     @MainActor func testThresholdCanBeAdjustedAndReset() {
         let app = launch()
         app.buttons["settings-nav"].tap()
@@ -284,7 +303,7 @@ final class DashboardUITests: XCTestCase {
     #else
     @MainActor func testReleaseIgnoresTestLaunchFlags() {
         let app = XCUIApplication()
-        app.launchArguments = ["--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+        app.launchArguments = ["--telemetry-history-fixture", "--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
                                "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["find-adapter"].waitForExistence(timeout: responseTimeout))
@@ -296,7 +315,7 @@ final class DashboardUITests: XCTestCase {
 
     @MainActor func testReleaseUpgradeRetainsPreferences() {
         let app = XCUIApplication()
-        app.launchArguments = ["--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
+        app.launchArguments = ["--telemetry-history-fixture", "--diagnostic-survey-fixture", "--simulation-scenario", "overheat", "--adapter-list-fixture", "--adapter-waiting-fixture",
                                "--glance-preview-fixture", "--connected-dashboard-fixture"]
         app.launch()
         XCTAssertTrue(app.buttons["retry-connection"].waitForExistence(timeout: responseTimeout))

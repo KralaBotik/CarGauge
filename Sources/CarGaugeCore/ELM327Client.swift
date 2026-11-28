@@ -4,7 +4,7 @@ public enum SupplementarySensor: Hashable, Sendable {
     case rpm, voltage
 }
 
-public enum SupplementaryTimeout: LocalizedError, Sendable {
+public enum SupplementaryTimeout: LocalizedError, Equatable, Sendable {
     case rpm, ecuVoltage, adapterVoltage
 
     public var sensor: SupplementarySensor { self == .rpm ? .rpm : .voltage }
@@ -25,6 +25,8 @@ public struct SupplementaryRecovery: Sendable {
 
     public init() {}
 
+    public mutating func allowRPMRetry() { skippedSensors.remove(.rpm) }
+
     public mutating func record(_ timeout: SupplementaryTimeout) {
         if timeout == .ecuVoltage {
             initialVoltageSource = .adapter
@@ -37,7 +39,7 @@ public struct SupplementaryRecovery: Sendable {
 @MainActor public final class ELM327Client {
     public static let initializationCommands = ["ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0"]
     public static let allowedCommands = Set(initializationCommands + OBDPID.allCases.map(\.rawValue)
-                                            + OBDSupportPage.allCases.map(\.rawValue) + ["ATRV"]).union(DiagnosticRequest.allowed)
+                                            + OBDSupportPage.allCases.map(\.rawValue) + ["ATRV"]).union(DiagnosticRequest.allowed).union(DriveSignal.extra.map(\.command))
 
     private let transport: any OBDTransport
     private var voltageSource: VoltageSource = .ecu
@@ -48,6 +50,7 @@ public struct SupplementaryRecovery: Sendable {
     private var sequenceInProgress = false
     private var initialCoolant: Reading?
     public private(set) var adapterIdentification: String?
+    public private(set) var latestDriveReadings: [DriveSignal: DriveReading] = [:]
 
     public init(transport: any OBDTransport) { self.transport = transport }
 
@@ -55,6 +58,7 @@ public struct SupplementaryRecovery: Sendable {
         try beginSequence()
         defer { sequenceInProgress = false }
         initialCoolant = nil
+        latestDriveReadings.removeAll()
         adapterIdentification = nil
         self.voltageSource = voltageSource
         rpmSupported = true
@@ -75,9 +79,7 @@ public struct SupplementaryRecovery: Sendable {
             }
         }
         // The first OBD request may perform a slow automatic protocol search.
-        let value = try OBDDecoder.decode(.coolant, response: await transport.exchange("0105", timeout: 15))
-        try Task.checkCancellation()
-        initialCoolant = Reading(value, at: Date())
+        initialCoolant = try await readPrimary(.coolant, signal: .coolant, timeout: 15)
     }
 
     public func readCoolant() async throws -> Reading {
@@ -87,9 +89,7 @@ public struct SupplementaryRecovery: Sendable {
             self.initialCoolant = nil
             if initialCoolant.isFresh(at: Date()) { return initialCoolant }
         }
-        let value = try await read(.coolant)
-        try Task.checkCancellation()
-        return Reading(value, at: Date())
+        return try await readPrimary(.coolant, signal: .coolant, timeout: 3)
     }
 
     /// Discovery is optional and may report nothing on healthy cars. A timed-out request
@@ -110,14 +110,18 @@ public struct SupplementaryRecovery: Sendable {
 
     /// Coolant is published first by the caller; slow optional sensors never hide it.
     public func readSupplementary(source: DataSource, coolant: Reading,
-                                  skipping sensors: Set<SupplementarySensor> = []) async throws -> TelemetrySnapshot {
+                                  skipping sensors: Set<SupplementarySensor> = [],
+                                  includeVoltage: Bool = true) async throws -> TelemetrySnapshot {
         try beginSequence()
         defer { sequenceInProgress = false }
         var rpm: Reading?
+        latestDriveReadings[.rpm] = nil
+        latestDriveReadings[.ecuVoltage] = nil
+        latestDriveReadings[.adapterVoltage] = nil
         if rpmSupported && !sensors.contains(.rpm) && (rpmRetryAfter.map { $0 <= Date() } ?? true) {
             let response = try await exchangeOptional(OBDPID.rpm.rawValue, timeoutFailure: .rpm)
             do {
-                rpm = Reading(try OBDDecoder.decode(.rpm, response: response), at: Date())
+                rpm = try acceptPrimary(.rpm, signal: .rpm, response: response)
                 rpmRetryAfter = nil
             } catch OBDError.unsupported {
                 rpmSupported = false
@@ -126,11 +130,11 @@ public struct SupplementaryRecovery: Sendable {
             }
         }
         var voltage: Reading?
-        if voltageSupported && !sensors.contains(.voltage) && (voltageRetryAfter.map { $0 <= Date() } ?? true) {
+        if includeVoltage && voltageSupported && !sensors.contains(.voltage) && (voltageRetryAfter.map { $0 <= Date() } ?? true) {
             if voltageSource == .ecu {
                 let response = try await exchangeOptional(OBDPID.moduleVoltage.rawValue, timeoutFailure: .ecuVoltage)
                 do {
-                    voltage = Reading(try OBDDecoder.decode(.moduleVoltage, response: response), at: Date())
+                    voltage = try acceptPrimary(.moduleVoltage, signal: .ecuVoltage, response: response)
                 } catch let error as OBDError where error.isMissingSample || error == .unsupported {
                     voltageSource = .adapter
                 }
@@ -138,7 +142,11 @@ public struct SupplementaryRecovery: Sendable {
             if voltageSource == .adapter {
                 let response = try await exchangeOptional("ATRV", timeoutFailure: .adapterVoltage)
                 do {
-                    voltage = Reading(try OBDDecoder.adapterVoltage(response), at: Date())
+                    let value = try OBDDecoder.adapterVoltage(response)
+                    let reading = Reading(value, at: .now)
+                    voltage = reading
+                    latestDriveReadings[.adapterVoltage] = DriveReading(signal: .adapterVoltage, value: value,
+                        bytes: Array(response.utf8), timestamp: reading.timestamp, monotonic: DriveClock.now)
                 } catch OBDError.unsupported {
                     voltageSupported = false
                 } catch let error as OBDError where error.isMissingSample {
@@ -171,8 +179,50 @@ public struct SupplementaryRecovery: Sendable {
         sequenceInProgress = true
     }
 
-    private func read(_ pid: OBDPID) async throws -> Double {
+    public func readDriveSignal(_ signal: DriveSignal) async throws -> DriveReading {
+        guard DriveSignal.extra.contains(signal), Self.allowedCommands.contains(signal.command) else { throw OBDError.unsupported }
+        try beginSequence()
+        defer { sequenceInProgress = false }
+        let response = try await transport.exchange(signal.command, timeout: 2)
         try Task.checkCancellation()
-        return try OBDDecoder.decode(pid, response: await transport.exchange(pid.rawValue, timeout: 3))
+        let now = Date()
+        let monotonic = DriveClock.now
+        let quality: DriveReading.Quality
+        do {
+            return try DriveReading.decode(signal, response: response, timestamp: now, monotonic: monotonic)
+        } catch OBDError.noData {
+            quality = .noData
+        } catch OBDError.unsupported {
+            quality = .unsupported
+        } catch OBDError.malformedResponse {
+            quality = .malformed
+        } catch OBDError.ambiguousResponse {
+            quality = .ambiguous
+        } catch DiagnosticWireError.negative {
+            quality = .unsupported
+        }
+        return DriveReading(signal: signal, value: nil, bytes: Array(response.utf8), timestamp: now,
+                            monotonic: monotonic, quality: quality)
+    }
+
+    private func readPrimary(_ pid: OBDPID, signal: DriveSignal, timeout: TimeInterval) async throws -> Reading {
+        let response = try await transport.exchange(pid.rawValue, timeout: timeout)
+        try Task.checkCancellation()
+        return try acceptPrimary(pid, signal: signal, response: response)
+    }
+
+    private func acceptPrimary(_ pid: OBDPID, signal: DriveSignal, response: String) throws -> Reading {
+        let value = try OBDDecoder.decode(pid, response: response)
+        let received = Date()
+        let monotonic = DriveClock.now
+        do {
+            latestDriveReadings[signal] = try DriveReading.decode(signal, response: response, timestamp: received, monotonic: monotonic)
+        } catch {
+            // Equal anonymous answers can still support the established dashboard decoder.
+            // They do not provide a unique input to the fuel model.
+            latestDriveReadings[signal] = DriveReading(signal: signal, value: value, bytes: Array(response.utf8),
+                timestamp: received, monotonic: monotonic, quality: .ambiguous)
+        }
+        return Reading(value, at: received)
     }
 }

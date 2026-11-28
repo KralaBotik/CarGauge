@@ -38,12 +38,20 @@ enum DiagnosticRequest: Equatable, Sendable {
 /// telemetry cycle; faults affecting the physical link are returned to its owner.
 @MainActor public final class DiagnosticSurvey {
     public private(set) var report: DiagnosticReport
-    private var remaining: [DiagnosticRequest] = [.protocolNumber, .supported(base: 0, freeze: false), .readiness,
-                                                  .codes(.stored), .codes(.pending), .codes(.permanent), .freezeCause]
+    public enum Scope: Sendable { case full, codesOnly }
+    private var remaining: [DiagnosticRequest]
     public private(set) var isExecuting = false
 
     public init(firstObservedCoolantAt: Date?, adapterName: String?, adapterIdentification: String? = nil,
-                source: DataSource = .vehicle, stationaryConfirmedByUser: Bool = false, now: Date = .now) {
+                source: DataSource = .vehicle, stationaryConfirmedByUser: Bool = false,
+                scope: Scope = .full, now: Date = .now) {
+        switch scope {
+        case .full:
+            remaining = [.protocolNumber, .supported(base: 0, freeze: false), .readiness,
+                         .codes(.stored), .codes(.pending), .codes(.permanent), .freezeCause]
+        case .codesOnly:
+            remaining = [.protocolNumber, .codes(.stored), .codes(.pending), .codes(.permanent)]
+        }
         report = DiagnosticReport(startedAt: now, firstObservedCoolantAt: firstObservedCoolantAt,
                                   adapterName: adapterName, adapterIdentification: adapterIdentification, source: source,
                                   stationaryConfirmedByUser: stationaryConfirmedByUser)

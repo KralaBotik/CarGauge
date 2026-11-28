@@ -12,10 +12,12 @@ public enum SimulationScenario: String, CaseIterable, Sendable {
     private var sample = 0
     private let scenario: SimulationScenario
     private let latency: Duration
+    private let telemetryProfile: Bool
 
-    public init(scenario: SimulationScenario = .warmup, latency: Duration = .milliseconds(35)) {
+    public init(scenario: SimulationScenario = .warmup, latency: Duration = .milliseconds(35), telemetryProfile: Bool = false) {
         self.scenario = scenario
         self.latency = latency
+        self.telemetryProfile = telemetryProfile
     }
 
     public func connect() async throws {
@@ -47,6 +49,21 @@ public enum SimulationScenario: String, CaseIterable, Sendable {
         guard latency < limit, !hangs else {
             disconnect()
             throw OBDError.timeout
+        }
+        if telemetryProfile {
+            switch command {
+            case "0100": return "4100BE3EB813\r>"
+            case "0120": return "412080058011\r>"
+            case "0140": return "4140BC000000\r>"
+            case "0103": return "41030200\r>"
+            case "010B": return "410B27\r>"
+            case "010D": return "410D32\r>"
+            case "010F": return "410F44\r>"
+            case "011F": return String(format: "411F%04X\r>", min(65535, sample + 30))
+            case "0142": return "NO DATA\r>"
+            case "0144": return "41448000\r>"
+            default: break
+            }
         }
         switch command {
         case "ATZ": return "ELM327 v2.3\r>"

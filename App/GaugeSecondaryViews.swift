@@ -31,6 +31,9 @@ struct GaugeHistoryView: View {
                 GaugeHeading(title: "Температура за сеанс",
                              subtitle: "Здесь появится график, когда CarGauge получит температуру от автомобиля.")
             }
+            if model.source == .vehicle || model.drive.isFixture {
+                DriveHistorySection(drive: model.drive)
+            }
         }
         .accessibilityIdentifier("history-screen")
     }
@@ -66,6 +69,7 @@ struct GaugeDiagnosticsView: View {
                     .accessibilityIdentifier("pid-support-summary")
             }
             GaugeDiagnosticSurveyView(model: model)
+            if model.source == .vehicle || model.drive.isFixture { DriveDiagnosticHistory(drive: model.drive) }
             #if !CARGAUGE_BASIC
             GaugeSection(title: "Общий контейнер виджета") {
                 Text(model.widgetContainerAvailable
@@ -189,6 +193,7 @@ struct GaugeSettingsView: View {
             }
             .buttonStyle(GaugeActionStyle())
             .accessibilityIdentifier("diagnostics-nav")
+            DriveSettingsSection(drive: model.drive)
         }
         .accessibilityIdentifier("settings-screen")
         .confirmationDialog("Забыть сохранённый адаптер?", isPresented: $confirmsReset, titleVisibility: .visible) {

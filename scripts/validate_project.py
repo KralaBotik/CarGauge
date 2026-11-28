@@ -49,7 +49,7 @@ def check_executable(executable):
     data = executable.read_bytes()
     name = str(executable)
     require(len(data) >= 32, f"Truncated executable: {name}")
-    for fixture in (b"SimulatedTransport", b"--simulation-scenario", b"--adapter-list-fixture", b"--adapter-waiting-fixture"):
+    for fixture in (b"SimulatedTransport", b"--simulation-scenario", b"--adapter-list-fixture", b"--adapter-waiting-fixture", b"--telemetry-history-fixture"):
         require(fixture not in data, f"Test telemetry present in Release executable: {name}")
     magic, cpu, _, kind, count, size, _, _ = struct.unpack_from("<8I", data)
     require((magic, cpu, kind) == (0xFEEDFACF, 0x100000C, 2), f"Not an arm64 Mach-O executable: {name}")
