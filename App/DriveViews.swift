@@ -367,7 +367,7 @@ private struct DriveCalibrationView: View {
 }
 
 struct DriveDiagnosticHistory: View {
-    let drive: DriveMonitor
+    @ObservedObject var drive: DriveMonitor
     @State private var events: [String] = []
 
     var body: some View {
@@ -377,7 +377,7 @@ struct DriveDiagnosticHistory: View {
                 Text(events[index]).font(.footnote)
             }
         }
-        .task { events = (try? await drive.archive.recentEvents()) ?? [] }
+        .task(id: drive.automaticReport?.id) { events = (try? await drive.archive.recentEvents()) ?? [] }
     }
 }
 

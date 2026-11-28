@@ -207,8 +207,8 @@ import Foundation
 
     private func finalizeAutomatic(_ survey: DiagnosticSurvey, owner: UUID) async {
         automatic = nil
-        automaticReport = survey.report
         await store(survey.report, kind: "automatic_dtc", owner: owner)
+        automaticReport = survey.report
     }
 
     func saveManual(_ report: DiagnosticReport) async {
