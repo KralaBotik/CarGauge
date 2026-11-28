@@ -36,6 +36,7 @@ struct DashboardView: View {
                 }
 
                 if !model.history.isEmpty { chartSection }
+                DriveDashboardReadings(drive: model.drive)
             }
         }
         .accessibilityIdentifier("instruments-screen")

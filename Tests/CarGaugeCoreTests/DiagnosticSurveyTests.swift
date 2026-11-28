@@ -85,7 +85,7 @@ import Testing
 
 @MainActor @Test func surveyWhitelistRejectsWritesHeadersAndArbitraryCommands() {
     for command in ["04","08","10C0","1101","14000000","220001","2E000100","3101","2701","ATSH7E0",
-                    "ATMA","0106","0105010C","0105\r04","020501","ATRV\n04"] {
+                    "ATMA","01FF","0105010C","0105\r04","020501","ATRV\n04"] {
         #expect(!ELM327Client.allowedCommands.contains(command))
     }
     for command in ["ATDPN","0100","01E0","0101","03","07","0A","020200","020000","015E"] {

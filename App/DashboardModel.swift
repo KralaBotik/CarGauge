@@ -108,6 +108,7 @@ enum MeasurementPhase {
     var canRetryConnection: Bool { adapterPreferences.preferredID != nil || source == .simulator }
     var isCheckingSelection: Bool { pendingAdapterID != nil && isRunning }
 
+    let drive = DriveMonitor()
     private let presentation = TelemetryPresentation()
     private let adapterPreferences: AdapterPreferences
     #if DEBUG
@@ -143,7 +144,7 @@ enum MeasurementPhase {
         let args = ProcessInfo.processInfo.arguments
         launchScenario = args.firstIndex(of: "--simulation-scenario").flatMap { index in
             args.indices.contains(index + 1) ? SimulationScenario(rawValue: args[index + 1]) : nil
-        } ?? (args.contains("--diagnostic-survey-fixture") ? .warmup : nil)
+        } ?? (args.contains("--diagnostic-survey-fixture") || drive.isFixture ? .warmup : nil)
         discoveryFixture = args.contains("--adapter-list-fixture")
         waitingFixture = args.contains("--adapter-waiting-fixture")
         if launchScenario != nil { hasConfiguredAdapter = true }
@@ -230,7 +231,11 @@ enum MeasurementPhase {
 
     private func publishSurvey(_ work: DiagnosticSurvey) {
         guard survey === work || diagnosticReport?.id == work.report.id else { return }
-        if work.report.state != .running, !work.isExecuting, survey === work { survey = nil }
+        if work.report.state != .running, !work.isExecuting, survey === work {
+            survey = nil
+            let completed = work.report
+            Task { await drive.saveManual(completed) }
+        }
         diagnosticReport = work.report
         do {
             try diagnosticStore.save(work.report)
@@ -371,7 +376,12 @@ enum MeasurementPhase {
         start(preservingHistory: true)
     }
 
-    private func stopSession(resetBLE: Bool = true) {
+    private func stopSession(resetBLE: Bool = true, engineStopped: Bool = false) {
+        if source == .vehicle || drive.isFixture {
+            let old = runID
+            let reason = engineStopped ? "engine_stopped" : "measurement_stopped"
+            Task { await drive.lose(owner: old, reason: reason) }
+        }
         finishSurvey("Сеанс измерений завершён")
         firstObservedOnLink = nil
         runID = UUID()
@@ -478,9 +488,10 @@ enum MeasurementPhase {
     private func run(id: UUID, targetID: UUID?) async {
         var retryBudget = VehicleRetryBudget()
         let source = source
+        let recordsDrive = source == .vehicle || drive.isFixture
         let startedAt = ContinuousClock.now
         var engine = EngineIdleMonitor()
-        var pendingSupportPages = OBDSupportPage.allCases[...]
+        var lastCapturedCoolant: Date?
         #if DEBUG
         var simulatedBreak = launchScenario == .reconnect
         var engineFixtureTime = Date(timeIntervalSinceReferenceDate: 0)
@@ -491,7 +502,7 @@ enum MeasurementPhase {
             if let scenario = launchScenario {
                 let selected: SimulationScenario = scenario == .reconnect
                     ? (simulatedBreak ? .disconnect : .warmup) : scenario
-                link = SimulatedTransport(scenario: selected)
+                link = SimulatedTransport(scenario: selected, telemetryProfile: drive.isFixture)
             } else {
                 link = ble
             }
@@ -511,6 +522,11 @@ enum MeasurementPhase {
                 guard !Task.isCancelled, id == runID else { return }
                 adapterIdentification = client.adapterIdentification
                 firstObservedOnLink = nil
+                lastCapturedCoolant = nil
+                if recordsDrive {
+                    await drive.didConnect(owner: id)
+                    guard !Task.isCancelled, id == runID else { return }
+                }
                 while !Task.isCancelled && id == runID {
                     if source == .vehicle, startedAt.duration(to: .now) >= .seconds(VehicleSessionPolicy.maximumSessionTime) {
                         pauseSession("Длительный сеанс завершён")
@@ -551,11 +567,22 @@ enum MeasurementPhase {
                     startAutomaticActivityIfPossible()
                     presentation.publish(coolant: reading, source: source, level: level)
                     refreshActivityState()
-                    let snapshot = try await client.readSupplementary(source: source, coolant: reading,
-                                                                       skipping: supplementaryRecovery.skippedSensors)
+                    let readVoltage = !recordsDrive || drive.shouldReadVoltage(at: DriveClock.now)
+                    var snapshot = try await client.readSupplementary(source: source, coolant: reading,
+                        skipping: supplementaryRecovery.skippedSensors, includeVoltage: readVoltage)
                     guard !Task.isCancelled, id == runID else { return }
+                    if !readVoltage, let previous = supplementary, previous.voltage?.isFresh(at: .now) == true {
+                        snapshot.voltage = previous.voltage
+                        snapshot.voltageSource = previous.voltageSource
+                    }
                     supplementary = snapshot
                     retryBudget.didCompleteCycle()
+                    if recordsDrive {
+                        lastCapturedCoolant = reading.timestamp
+                        try await drive.capture(owner: id, client: client, background: !sceneIsActive, thermal: level)
+                        guard !Task.isCancelled, id == runID else { return }
+                        supportResponses = drive.masks
+                    }
                     let engineSample: (rpm: Reading?, at: Date)
                     let pollDelay: Duration
                     #if DEBUG
@@ -583,19 +610,24 @@ enum MeasurementPhase {
                         defer { publishSurvey(survey) }
                         try await survey.performNext(with: client)
                         guard !Task.isCancelled, id == runID else { return }
-                    } else if source == .vehicle, sceneIsActive, engineSample.rpm?.value != 0,
-                       let page = pendingSupportPages.popFirst() {
-                        // Probe one mask after useful direct measurements; never gate a PID on a mask bit.
-                        supportResponses[page] = "нет надёжного ответа"
-                        let mask = try await client.probeSupport(page)
-                        guard !Task.isCancelled, id == runID else { return }
-                        if let mask { supportResponses[page] = String(format: "%08X", mask.bits) }
+                    } else if recordsDrive && sceneIsActive {
+                        try await drive.advanceDiagnostics(owner: id, client: client, adapter: configuredName,
+                                                           firstObservation: firstObservedOnLink)
                     }
                     try await Task.sleep(for: pollDelay)
                 }
             } catch {
                 guard !Task.isCancelled, id == runID else { return }
                 finishSurvey(error.localizedDescription)
+                if recordsDrive {
+                    if let accepted = coolant, accepted.timestamp != lastCapturedCoolant,
+                       client.latestDriveReadings[.coolant]?.timestamp == accepted.timestamp {
+                        await drive.captureInterruptedPrimary(owner: id, client: client)
+                    }
+                    await drive.lose(owner: id, reason: "link_lost", mayResume: true)
+                    guard !Task.isCancelled, id == runID else { return }
+                    supportResponses = [:]
+                }
                 firstObservedOnLink = nil
                 link.disconnect()
                 transport = nil
@@ -642,7 +674,7 @@ enum MeasurementPhase {
     }
 
     private func pauseSession(_ message: String, engineStopped: Bool = false) {
-        stopSession()
+        stopSession(engineStopped: engineStopped)
         if engineStopped { phase = .parked }
         status = message
     }

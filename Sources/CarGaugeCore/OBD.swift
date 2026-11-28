@@ -11,10 +11,18 @@ public enum OBDPID: String, CaseIterable, Sendable {
 
 public enum OBDSupportPage: String, CaseIterable, Sendable {
     case pids01To20 = "0100"
+    case pids21To40 = "0120"
     case pids41To60 = "0140"
 
     var responsePrefix: String { "41" + rawValue.suffix(2) }
-    var firstPID: Int { self == .pids01To20 ? 0x01 : 0x41 }
+    var base: UInt8 {
+        switch self {
+        case .pids01To20: 0
+        case .pids21To40: 0x20
+        case .pids41To60: 0x40
+        }
+    }
+    var firstPID: Int { Int(base) + 1 }
 }
 
 public struct OBDSupportMask: Equatable, Sendable {

@@ -26,6 +26,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install SQLite headers
+        run: apt-get update && apt-get install -y --no-install-recommends libsqlite3-dev
       - name: Test Swift core
         shell: bash
         run: |
@@ -46,14 +48,10 @@ jobs:
           retention-days: 14
 
   ios:
-    name: iOS (${{ matrix.flavor }})
+    name: iOS Simulator and device build
     needs: core
     runs-on: macos-26
     timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        flavor: [full, basic]
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       CARGAUGE_IOS_RUNTIME: ${{ inputs.runtime }}
@@ -69,12 +67,12 @@ jobs:
           fi
           xcodegen --version
       - name: Test on an iPhone simulator and build for iPhone
-        run: scripts/ci-ios.sh ${{ matrix.flavor }}
+        run: scripts/ci-ios.sh full
       - name: Upload iOS diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: CarGauge-iOS-${{ matrix.flavor }}-diagnostics
+          name: CarGauge-iOS-diagnostics
           path: |
             .artifacts/ios.*/*.log
             .artifacts/ios.*/CarGauge-UI*.xcresult
@@ -88,53 +86,19 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: CarGauge-iPhone11-${{ matrix.flavor }}-screenshots
+          name: CarGauge-iPhone11-screenshots
           path: .artifacts/ios.*/gallery/*.png
           include-hidden-files: true
           retention-days: 14
           if-no-files-found: warn
-      - name: Stage the validated IPA for release
-        if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0' || github.ref == 'refs/heads/feature/vehicle-diagnostics'))) }}
+      - name: Publish CarGauge.ipa
+        if: ${{ success() && github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: CarGauge-${{ matrix.flavor }}-candidate
+          name: CarGauge-IPA
           path: |
-            .artifacts/ios.*/*.ipa
-            .artifacts/ios.*/*.ipa.sha256
-          include-hidden-files: true
-          compression-level: 0
-          retention-days: 1
-          if-no-files-found: error
-
-  publish-ipa:
-    name: Publish Basic and Full IPA
-    needs: ios
-    if: ${{ success() && (github.ref == 'refs/heads/main' || (github.event_name == 'push' && (github.ref == 'refs/heads/release/0.3.0-rc' || github.ref == 'refs/heads/release/0.4.0' || github.ref == 'refs/heads/release/0.4.1' || github.ref == 'refs/heads/release/0.5.0' || github.ref == 'refs/heads/release/0.6.0' || github.ref == 'refs/heads/feature/vehicle-diagnostics'))) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: CarGauge-*-candidate
-          path: candidates
-      - name: Verify both checksums
-        run: |
-          (cd candidates/CarGauge-basic-candidate/ios.* && sha256sum --check ./*.sha256)
-          (cd candidates/CarGauge-full-candidate/ios.* && sha256sum --check ./*.sha256)
-      - name: Publish the Basic IPA
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: CarGauge-basic-IPA
-          path: candidates/CarGauge-basic-candidate/
-          include-hidden-files: true
-          compression-level: 0
-          retention-days: 14
-          if-no-files-found: error
-      - name: Publish the Full IPA
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: CarGauge-full-IPA
-          path: candidates/CarGauge-full-candidate/
+            .artifacts/ios.*/CarGauge.ipa
+            .artifacts/ios.*/CarGauge.ipa.sha256
           include-hidden-files: true
           compression-level: 0
           retention-days: 14

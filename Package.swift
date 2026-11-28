@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "cargauge-simulator", targets: ["CarGaugeSimulator"])
     ],
     targets: [
-        .target(name: "CarGaugeCore"),
+        .systemLibrary(name: "CSQLite", pkgConfig: "sqlite3", providers: [.apt(["libsqlite3-dev"])]),
+        .target(name: "CarGaugeCore", dependencies: ["CSQLite"]),
         .executableTarget(name: "CarGaugeSimulator", dependencies: ["CarGaugeCore"]),
         .testTarget(name: "CarGaugeCoreTests", dependencies: ["CarGaugeCore"])
     ]

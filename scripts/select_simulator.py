@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import sys
 
 runtime_prefix = "com.apple.CoreSimulator.SimRuntime."
@@ -12,7 +13,9 @@ candidates = []
 
 for runtime, devices in devices_by_runtime.items():
     name = runtime.removeprefix(runtime_prefix)
-    if not name.startswith("iOS-") or (requested and requested != name):
+    if not runtime.startswith(runtime_prefix) or not re.fullmatch(r"iOS-[0-9]+(?:-[0-9]+)+", name):
+        continue
+    if requested and requested != name:
         continue
     version = tuple(map(int, name.removeprefix("iOS-").split("-")))
     for device in devices:

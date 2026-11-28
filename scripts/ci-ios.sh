@@ -7,12 +7,13 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
-flavor="${1:-full}"
-case "$flavor" in
-  full) scheme=CarGauge; test_target=CarGaugeUITests; ipa=CarGauge-Full-unsigned.ipa ;;
-  basic) scheme=CarGaugeBasic; test_target=CarGaugeBasicUITests; ipa=CarGauge-Basic-unsigned.ipa ;;
-  *) echo "Usage: scripts/ci-ios.sh [full|basic]" >&2; exit 2 ;;
-esac
+if [[ "${1:-full}" != full ]]; then
+  echo "Usage: scripts/ci-ios.sh [full]" >&2
+  exit 2
+fi
+scheme=CarGauge
+test_target=CarGaugeUITests
+ipa=CarGauge.ipa
 
 mkdir -p .artifacts
 output="$(mktemp -d "$PWD/.artifacts/ios.XXXXXX")"
@@ -58,7 +59,7 @@ if simulator="$(printf '%s\n' "$devices" | python3 scripts/select_simulator.py)"
       "-only-testing:$test_target/DashboardUITests/testReleaseIgnoresTestLaunchFlags" test \
       2>&1 | tee "$output/CarGauge-ReleaseUI.log"; then
       status=1
-    elif [[ "$flavor" == full ]]; then
+    else
       if ! scripts/ci-upgrade.sh "$simulator" "$output" "$derived" 2>&1 | tee "$output/CarGauge-Upgrade.log"; then
         status=1
       fi
@@ -88,7 +89,7 @@ if xcodebuild -project CarGauge.xcodeproj -scheme "$scheme" -configuration Relea
       echo "Release build is missing the Open Instruments shortcut metadata." | tee -a "$output/CarGauge-Device.log"
       exit 1
     fi
-    python3 scripts/package_ipa.py --flavor "$flavor" --app "$app" "$output/$ipa" \
+    python3 scripts/package_ipa.py --flavor full --app "$app" "$output/$ipa" \
       2>&1 | tee -a "$output/CarGauge-Device.log"
   fi
 else
