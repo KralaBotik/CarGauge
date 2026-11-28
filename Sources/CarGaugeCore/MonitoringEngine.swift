@@ -335,12 +335,13 @@ public struct MonitoringEngine: Sendable {
 
     private mutating func learn(_ evaluator: MonitoringEvaluation, bucket: MonitoringBucket, trip: Int64) {
         for signal in MonitoringBaseline.signals {
-            if [.shortTrim, .longTrim, .oxygen1, .oxygen2].contains(signal),
-               evaluator.truth(.closedLoop).value != true { continue }
             let key = MonitoringBaselineKey(signal: signal, bucket: bucket)
             guard let sample = evaluator.fresh(signal, maximumAge: min(signal.displayLifetime, 80)),
-                  let value = sample.value, value.isFinite,
+                  let value = sample.value, value.isFinite, let bucketSince, sample.monotonic >= bucketSince,
                   lastLearned[key].map({ sample.monotonic - $0 >= 12 }) ?? true else { continue }
+            if [.shortTrim, .longTrim, .oxygen1, .oxygen2].contains(signal) {
+                guard let closedLoopSince = evaluator.closedLoopSince, sample.monotonic >= closedLoopSince else { continue }
+            }
             lastLearned[key] = sample.monotonic
             baseline.learn(key: key, trip: trip, value: value)
         }

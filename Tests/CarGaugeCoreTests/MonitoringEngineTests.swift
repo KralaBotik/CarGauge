@@ -295,3 +295,17 @@ private func observationRule(window: MonitoringMetric, closedLoop: Bool = false,
     let disconnection = engine.evaluate(frame(110, coolant: 72, speed: 40))
     #expect(state(disconnection, "coolant.drop")?.state == .notApplicable)
 }
+
+@Test func monitoringBaselineExcludesCachedReadingsFromPriorFuelMode() {
+    var engine = MonitoringEngine()
+    for time in stride(from: 0.0, through: 18, by: 3) {
+        _ = engine.evaluate(frame(time, fuelSystem: [4, 0],
+                                 extra: [.oxygen1: reading(.oxygen1, 0.8, time: time)]))
+    }
+    let closed = engine.evaluate(frame(21, fuelSystem: [2, 0],
+                                      extra: [.oxygen1: reading(.oxygen1, 0.8, time: 18)]))
+    #expect(closed.baseline.first { $0.signal == .oxygen1 }?.sampleCount == 0)
+    let resampled = engine.evaluate(frame(24, fuelSystem: [2, 0],
+                                         extra: [.oxygen1: reading(.oxygen1, 0.8, time: 24)]))
+    #expect(resampled.baseline.first { $0.signal == .oxygen1 }?.sampleCount == 1)
+}
