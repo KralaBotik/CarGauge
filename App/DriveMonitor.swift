@@ -218,6 +218,7 @@ import Foundation
 
     private func store(_ report: DiagnosticReport, kind: String, owner: UUID? = nil) async {
         do {
+            try await archive.saveDiagnostic(report, owner: owner)
             let json = try report.json(includeRaw: true)
             var summary: String?
             if kind == "automatic_dtc" {

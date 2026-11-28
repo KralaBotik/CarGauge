@@ -38,13 +38,16 @@ enum DiagnosticRequest: Equatable, Sendable {
 /// telemetry cycle; faults affecting the physical link are returned to its owner.
 @MainActor public final class DiagnosticSurvey {
     public private(set) var report: DiagnosticReport
-    public enum Scope: Sendable { case full, codesOnly }
+    public enum Scope: Equatable, Sendable { case full, codesOnly }
     private var remaining: [DiagnosticRequest]
+    private let scope: Scope
+    private var queuedAutomaticFreeze = false
     public private(set) var isExecuting = false
 
     public init(firstObservedCoolantAt: Date?, adapterName: String?, adapterIdentification: String? = nil,
                 source: DataSource = .vehicle, stationaryConfirmedByUser: Bool = false,
                 scope: Scope = .full, now: Date = .now) {
+        self.scope = scope
         switch scope {
         case .full:
             remaining = [.protocolNumber, .supported(base: 0, freeze: false), .readiness,
@@ -139,6 +142,10 @@ enum DiagnosticRequest: Equatable, Sendable {
             guard let framing = report.transportProtocol else { throw OBDError.unsupported }
             let values = try DiagnosticDecoder.troubleCodes(service: status.service, response: raw, framing: framing)
             report.codes.append(.init(status: status, replyGroups: values))
+            if scope == .codesOnly, !queuedAutomaticFreeze, values.contains(where: { !$0.isEmpty }) {
+                queuedAutomaticFreeze = true
+                remaining.append(.freezeCause)
+            }
         case .freezeCause:
             let replies = try DiagnosticDecoder.modePID(mode: 2, pid: 2, frame: 0, bytes: 2, response: raw)
             report.freezeCauses = replies.map {

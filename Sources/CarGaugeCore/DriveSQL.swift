@@ -9,7 +9,7 @@ final class DriveSQL {
     }
 
     enum Value {
-        case integer(Int64), real(Double), text(String), null
+        case integer(Int64), real(Double), text(String), blob(Data), null
         static func optional(_ value: Double?) -> Self { value.map(Self.real) ?? .null }
         static func time(_ date: Date?) -> Self { optional(date?.timeIntervalSince1970) }
     }
@@ -52,7 +52,7 @@ final class DriveSQL {
         try query(sql, bindings) { _ in }
     }
 
-    func query(_ sql: String, _ bindings: [Value] = [], row: (OpaquePointer) -> Void) throws {
+    func query(_ sql: String, _ bindings: [Value] = [], row: (OpaquePointer) throws -> Void) throws {
         var pending: OpaquePointer?
         let status = sqlite3_prepare_v2(handle, sql, -1, &pending, nil)
         guard status == SQLITE_OK, let statement = pending else { throw error }
@@ -66,6 +66,11 @@ final class DriveSQL {
             case .integer(let number): sqlite3_bind_int64(statement, index, number)
             case .real(let number): sqlite3_bind_double(statement, index, number)
             case .text(let text): sqlite3_bind_text(statement, index, text, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            case .blob(let data): data.withUnsafeBytes {
+                if $0.isEmpty { return sqlite3_bind_zeroblob(statement, index, 0) }
+                return sqlite3_bind_blob(statement, index, $0.baseAddress, Int32($0.count),
+                                         unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
             case .null: sqlite3_bind_null(statement, index)
             }
             guard result == SQLITE_OK else { throw error }
@@ -74,7 +79,7 @@ final class DriveSQL {
             let result = sqlite3_step(statement)
             if result == SQLITE_DONE { return }
             guard result == SQLITE_ROW else { throw error }
-            row(statement)
+            try row(statement)
         }
     }
 
@@ -90,6 +95,13 @@ final class DriveSQL {
 
     static func string(_ row: OpaquePointer, _ column: Int32) -> String? {
         sqlite3_column_text(row, column).map { String(cString: $0) }
+    }
+
+    static func data(_ row: OpaquePointer, _ column: Int32) -> Data? {
+        guard sqlite3_column_type(row, column) != SQLITE_NULL else { return nil }
+        let count = Int(sqlite3_column_bytes(row, column))
+        guard let bytes = sqlite3_column_blob(row, column) else { return Data() }
+        return Data(bytes: bytes, count: count)
     }
 
     private var error: Failure { Failure(message: String(cString: sqlite3_errmsg(handle))) }

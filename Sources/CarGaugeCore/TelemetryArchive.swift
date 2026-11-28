@@ -27,15 +27,20 @@ public actor TelemetryArchive {
 
     public init(url: URL) { self.url = url }
 
-    private func database() throws -> DriveSQL {
+    func database() throws -> DriveSQL {
         if let connection { return connection }
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let db = try DriveSQL(url: url)
         try db.execute("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")
         let version = try db.scalar("PRAGMA user_version") ?? 0
-        guard version == 0 || version == 1 else { throw DriveSQL.Failure(message: "Неподдерживаемая версия локальной истории.") }
+        guard (0...2).contains(version) else { throw DriveSQL.Failure(message: "Неподдерживаемая версия локальной истории.") }
         try db.transaction {
-            if version == 0 { try db.execute(Self.schema) }
+            if version == 0 { try db.execute(Self.schemaV1) }
+            if version < 2 {
+                try db.execute(Self.healthSchema)
+                try Self.importV1DiagnosticReceipts(db)
+                try db.execute("PRAGMA user_version=2")
+            }
             try db.execute("UPDATE trip SET finish = 'app_interrupted' WHERE finish IS NULL")
             try db.execute("""
                 INSERT INTO gap(trip_id, started_utc, reason)
@@ -48,13 +53,13 @@ public actor TelemetryArchive {
         return db
     }
 
-    public func record(owner: UUID, frame: TripFrame) throws {
-        guard !endedOwners.contains(owner), frame.monotonic.isFinite else { return }
+    @discardableResult public func record(owner: UUID, frame: TripFrame) throws -> Int64? {
+        guard !endedOwners.contains(owner), frame.monotonic.isFinite else { return nil }
         let db = try database()
         try flushPendingEnd(database: db)
         if let active {
             guard active.owner == owner else { throw DriveSQL.Failure(message: "Переход между сеансами записи.") }
-            guard frame.monotonic > active.previous.monotonic else { return }
+            guard frame.monotonic > active.previous.monotonic else { return active.id }
             let elapsed = frame.monotonic - active.previous.monotonic
             let stopped = frame.rpm == 0 && active.previous.rpm == 0 && elapsed <= TripInterval.maximumGap
             let interrupted = active.writeGap || elapsed > TripInterval.maximumGap || frame.rpm == nil
@@ -82,6 +87,7 @@ public actor TelemetryArchive {
                 throw error
             }
             self.active = stopped ? nil : Active(owner: owner, id: active.id, origin: active.origin, previous: frame)
+            return active.id
         } else if frame.rpm != 0 && (frame.rpm != nil ||
                     frame.readings.contains { $0.signal == .coolant && $0.quality == .received }) {
             let id = try db.transaction {
@@ -95,7 +101,13 @@ public actor TelemetryArchive {
                 return id
             }
             active = Active(owner: owner, id: id, origin: frame.monotonic, previous: frame)
+            return id
         }
+        return nil
+    }
+
+    func currentTripID(owner: UUID?) -> Int64? {
+        active.flatMap { $0.owner == owner ? $0.id : nil }
     }
 
     public func end(owner: UUID, reason: String, mayResume: Bool = false) throws {
@@ -349,7 +361,7 @@ public actor TelemetryArchive {
         }
     }
 
-    private static let schema = """
+    static let schemaV1 = """
         CREATE TABLE trip(id INTEGER PRIMARY KEY,owner TEXT NOT NULL,started_utc REAL NOT NULL,
           last_utc REAL NOT NULL,engine_start_utc REAL,connected_utc REAL,finish TEXT);
         CREATE TABLE frame(id INTEGER PRIMARY KEY,trip_id INTEGER NOT NULL REFERENCES trip(id),

@@ -59,7 +59,7 @@ public struct TripInterval: Equatable, Sendable {
     }
 }
 
-public struct RecordedTrip: Identifiable, Sendable {
+public struct RecordedTrip: Codable, Identifiable, Sendable {
     public let id: Int64
     public let startedAt: Date
     public let lastObservation: Date
