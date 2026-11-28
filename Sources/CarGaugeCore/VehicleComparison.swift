@@ -29,7 +29,7 @@ extension TelemetryArchive {
         for signal in Set(signals).sorted(by: { $0.rawValue < $1.rawValue }) {
             var buckets: [String: [(before: Bool, trip: Int64, value: Double)]] = [:]
             try db.query("""
-                SELECT t.id,t.last_utc<?,AVG(s.value),CAST(a.value/10 AS INTEGER),CAST(l.value/10 AS INTEGER),COUNT(s.value)
+                SELECT t.id,t.last_utc<?,AVG(s.value),(CAST(a.value / 10 AS INTEGER) - (a.value / 10 < CAST(a.value / 10 AS INTEGER))),CAST(l.value/10 AS INTEGER),COUNT(s.value)
                 FROM trip t JOIN frame f ON f.trip_id=t.id JOIN reading s ON s.frame_id=f.id
                   JOIN reading c ON c.frame_id=f.id AND c.signal=5 AND c.quality='received'
                   JOIN reading a ON a.frame_id=(SELECT af.id FROM frame af JOIN reading ar ON ar.frame_id=af.id
@@ -41,7 +41,7 @@ extension TelemetryArchive {
                 WHERE (t.last_utc<? OR t.started_utc>?) AND t.started_utc>=? AND t.last_utc<=?
                   AND f.speed=0 AND f.rpm>0 AND c.value BETWEEN 80 AND 105 AND s.signal=? AND s.quality='received'
                   AND NOT EXISTS (SELECT 1 FROM event e WHERE e.trip_id=t.id AND e.kind='wall_clock_change')
-                GROUP BY t.id,CAST(a.value/10 AS INTEGER),CAST(l.value/10 AS INTEGER)
+                GROUP BY t.id,(CAST(a.value / 10 AS INTEGER) - (a.value / 10 < CAST(a.value / 10 AS INTEGER))),CAST(l.value/10 AS INTEGER)
                 HAVING COUNT(s.value)>=5 ORDER BY t.id
                 """, [.time(date), .time(date), .time(date), .time(date.addingTimeInterval(-radius)),
                       .time(date.addingTimeInterval(radius)), .integer(Int64(signal.rawValue))]) { row in
@@ -67,10 +67,14 @@ extension TelemetryArchive {
     /// Report-only comparison. This never opens a monitoring problem.
     public func comparableFuelTrips() throws -> FuelTripComparison? {
         let db = try database()
-        var options: [(RecordedTrip, Double, Double, Double)] = []
+        var options: [(RecordedTrip, Double, Double, Double, Double)] = []
         for trip in try recentTrips(limit: 12) {
             guard trip.finishReason == "engine_stopped", trip.observedEngineSeconds > 0,
-                  trip.fuelSeconds / trip.observedEngineSeconds >= 0.90, let km = trip.distanceKm, km > 0,
+                  trip.fuelSeconds / trip.observedEngineSeconds >= 0.90,
+                  trip.elapsedSeconds > 0, trip.observedEngineSeconds / trip.elapsedSeconds >= 0.90,
+                  trip.distanceSeconds / trip.observedEngineSeconds >= 0.90,
+                  (try archivedGaps(trip: trip.id)).isEmpty,
+                  let km = trip.distanceKm, km > 0,
                   trip.averageLitresPer100km != nil else { continue }
             let speed = 3600 * km / max(trip.distanceSeconds, 1)
             var calibration: Double?
@@ -83,11 +87,11 @@ extension TelemetryArchive {
                 if let minimum = DriveSQL.number(row, 0), minimum == DriveSQL.number(row, 1) { calibration = minimum }
                 ambient = DriveSQL.number(row, 2)
             }
-            if let calibration, let ambient { options.append((trip, speed, calibration, ambient)) }
+            if let calibration, let ambient { options.append((trip, speed, calibration, ambient, trip.idleSeconds / trip.observedEngineSeconds)) }
         }
         guard let latest = options.first,
               let older = options.dropFirst().first(where: { item in
-                  item.2 == latest.2 && abs(item.3 - latest.3) <= 5 && abs(item.1 - latest.1) <= 8
+                  item.2 == latest.2 && abs(item.3 - latest.3) <= 5 && abs(item.1 - latest.1) <= 8 && abs(item.4 - latest.4) <= 0.1
               }) else { return nil }
         return FuelTripComparison(older: older.0, newer: latest.0,
                                   meanSpeedDifference: latest.1 - older.1, commonCalibration: latest.2)

@@ -52,6 +52,7 @@ struct ReportSurvey: Encodable {
     let finished: Date?
     let state: DiagnosticReport.State
     let adapter: String?
+    let adapterIdentification: String?
     let protocolName: String?
     let source: String
     let firstObservedCoolantAt: Date?
@@ -70,6 +71,7 @@ struct ReportSurvey: Encodable {
         finished = report.finishedAt
         state = report.state
         adapter = includePrivate ? report.adapterName : nil
+        adapterIdentification = includePrivate ? report.adapterIdentification : nil
         protocolName = report.transportProtocol?.rawValue
         source = report.source
         firstObservedCoolantAt = report.firstObservedCoolantAt
@@ -89,10 +91,11 @@ struct ReportSurvey: Encodable {
 }
 
 extension TelemetryArchive {
-    func surveys(limit: Int? = nil) throws -> [DiagnosticReport] {
+    func surveys(limit: Int? = nil, manualOnly: Bool = false) throws -> [DiagnosticReport] {
         var rows: [DiagnosticReport] = []
         let clause = limit == nil ? "" : " LIMIT ?"
-        try database().query("SELECT payload FROM diagnostic_receipt ORDER BY utc DESC,id DESC" + clause,
+        let source = manualOnly ? " WHERE json_extract(CAST(payload AS TEXT), '$.stationaryConfirmedByUser')=1" : ""
+        try database().query("SELECT payload FROM diagnostic_receipt" + source + " ORDER BY utc DESC,id DESC" + clause,
                              limit.map { [.integer(Int64($0))] } ?? []) { row in
             if let bytes = DriveSQL.data(row, 0) {
                 rows.append(try JSONDecoder().decode(DiagnosticReport.self, from: bytes))
@@ -231,7 +234,7 @@ extension TelemetryArchive {
             for id in ids { sourceSurveys += try tripSurveys(id) }
             reportScope = "problem"
         case .survey:
-            sourceSurveys = try surveys(limit: 1)
+            sourceSurveys = try surveys(limit: 1, manualOnly: true)
             reportScope = "survey"
         case .diagnostics:
             sourceSurveys = try surveys()

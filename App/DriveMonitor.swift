@@ -7,6 +7,7 @@ import Foundation
     @Published private(set) var fuel: FuelRate?
     @Published private(set) var supported: [DriveSignal] = []
     @Published private(set) var storageError: String?
+    @Published private(set) var diagnosticRevision = 0
     @Published private(set) var automaticReport: DiagnosticReport?
     @Published var visibleSignals: Set<DriveSignal> {
         didSet { UserDefaults.standard.set(visibleSignals.map { Int($0.rawValue) }.sorted(), forKey: Self.signalsKey) }
@@ -223,14 +224,15 @@ import Foundation
         if liveOwner == owner || liveOwner == nil { automaticReport = survey.report }
     }
 
-    func saveManual(_ report: DiagnosticReport) async {
+    func saveManual(_ report: DiagnosticReport, owner: UUID?) async {
         guard report.source == "vehicle" else { return }
-        await store(report, kind: "manual_survey")
+        await store(report, kind: "manual_survey", owner: owner)
     }
 
     private func store(_ report: DiagnosticReport, kind: String, owner: UUID? = nil) async {
         do {
             try await archive.saveDiagnostic(report, owner: owner)
+            diagnosticRevision &+= 1
             await health.recordedScan(report, owner: owner)
             let json = try report.json(includeRaw: true)
             var summary: String?
@@ -270,7 +272,9 @@ import Foundation
             survey.interrupt(reason)
             await finalizeAutomatic(survey, owner: owner)
         }
-        do { try await archive.end(owner: owner, reason: reason, mayResume: mayResume) }
-        catch { storageError = error.localizedDescription }
+        do {
+            try await archive.end(owner: owner, reason: reason, mayResume: mayResume)
+            if !mayResume { await service.refresh() }
+        } catch { storageError = error.localizedDescription }
     }
 }

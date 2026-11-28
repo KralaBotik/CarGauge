@@ -166,7 +166,7 @@ struct MaintenanceView: View {
                 }
                 LabeledContent("Моточасы по записи владельца", value: estimate(counters.engineHours, unit: "ч", certainty: counters.engineHoursCertainty))
                 if let hours = counters.observedEngineHours {
-                    LabeledContent("Наблюдалось после отметки", value: number(hours, unit: "ч"))
+                    LabeledContent(ledger.latestOdometer == nil ? "Наблюдалось в журнале" : "Наблюдалось после отметки", value: number(hours, unit: "ч"))
                 }
                 if let seconds = portal.usage?.additionalRunTimeSeconds, seconds > 0 {
                     LabeledContent("До наблюдения · оценка по 011F", value: "≈" + number(seconds / 3600, unit: "ч"))
@@ -255,6 +255,8 @@ struct MaintenanceView: View {
                     .accessibilityIdentifier("maintenance-add-fill")
                 if let openFuelCalibration {
                     Button("Открыть калибровку расхода", action: openFuelCalibration).buttonStyle(GaugeActionStyle())
+                    Text("Калибровка фиксирует принятый интервал. Если исправили заправку, сбросьте калибровку перед повторным учётом.")
+                        .font(.footnote).foregroundStyle(palette.muted)
                 }
                 if ledger.fills.isEmpty {
                     Text("Сохраните объём, пробег и признак полного бака.").foregroundStyle(palette.muted)

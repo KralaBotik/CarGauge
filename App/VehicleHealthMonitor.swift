@@ -26,6 +26,7 @@ import UserNotifications
     private var saveAgain = false
     private var lastSave: Double?
     private var saveDeferredUntil = 0.0
+    private var deferredSave: Task<Void, Never>?
     private var pending: [MonitoringEvent] = []
     private var activeOwner: UUID?
     private var scan: (UUID, DiagnosticReport, Double)?
@@ -161,13 +162,27 @@ import UserNotifications
         openIssues = checkpoint.openIssues.sorted { $0.occurredAt > $1.occurredAt }
     }
 
-    private func persist(at now: Double, force: Bool) async {
+    private func scheduleDeferredSave() {
+        guard deferredSave == nil else { return }
+        let delay = max(0, saveDeferredUntil - DriveClock.now)
+        deferredSave = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self else { return }
+            deferredSave = nil
+            await persist(at: DriveClock.now, force: true, mayDefer: false)
+        }
+    }
+
+    private func persist(at now: Double, force: Bool, mayDefer: Bool = true) async {
         if saving {
             if force { saveAgain = true }
             return
         }
-        guard now >= saveDeferredUntil,
-              force || !pending.isEmpty || (lastSave.map { now - $0 >= 60 } ?? true) else { return }
+        guard now >= saveDeferredUntil else {
+            if force && mayDefer { scheduleDeferredSave() }
+            return
+        }
+        guard force || !pending.isEmpty || (lastSave.map { now - $0 >= 60 } ?? true) else { return }
         saving = true
         defer {
             saving = false
@@ -195,7 +210,8 @@ import UserNotifications
             }
         } catch {
             errorMessage = error.localizedDescription
-            saveDeferredUntil = now + 5
+            saveDeferredUntil = DriveClock.now + 5
+            if force && mayDefer { scheduleDeferredSave() }
         }
     }
 

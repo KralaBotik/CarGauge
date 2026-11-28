@@ -8,6 +8,7 @@ struct GaugeDiagnosticSurveyView: View {
     @State private var confirmSurvey = false
     @State private var includeRaw = false
     @State private var exporting = false
+    @State private var showingVehicleReport = false
     @State private var export = SurveyExport.json
     @State private var document: SurveyDocument?
     @State private var exportError: String?
@@ -46,6 +47,9 @@ struct GaugeDiagnosticSurveyView: View {
             Button("Отмена", role: .cancel) {}
         } message: {
             Text("CarGauge прочитает только стандартные параметры и сведения об ошибках.")
+        }
+        .sheet(isPresented: $showingVehicleReport) {
+            VehicleReportSheet(archive: model.drive.archive, initialScope: .survey)
         }
         .fileExporter(isPresented: $exporting, document: document, contentType: export.contentType,
                       defaultFilename: "CarGauge-\(export.suffix)") { result in
@@ -102,24 +106,32 @@ struct GaugeDiagnosticSurveyView: View {
                 }
             }
             GaugeRule()
-            Toggle("Включить исходные ответы в JSON", isOn: $includeRaw)
-                .tint(palette.operating)
-                .accessibilityIdentifier("survey-include-raw")
-            Menu {
-                Button("Отчёт JSON") { makeExport(.json, report: report) }
-                    .accessibilityIdentifier("survey-json")
-                Button("Измерения CSV") { makeExport(.csv, report: report) }
-                    .accessibilityIdentifier("survey-csv")
-                Button("Текстовая сводка") { makeExport(.summary, report: report) }
-                    .accessibilityIdentifier("survey-summary")
-            } label: {
-                Label("Экспорт обследования", systemImage: "square.and.arrow.up")
-                    .frame(minHeight: 44)
-            }
-            .disabled(!model.surveyAllowsExport)
-            .accessibilityIdentifier("survey-export")
-            if !model.surveyAllowsExport {
-                Text("Завершается последний запрос…").font(.footnote).foregroundStyle(palette.muted)
+            if report.source == "vehicle" {
+                Button("Поделиться отчётом", systemImage: "square.and.arrow.up") { showingVehicleReport = true }
+                    .buttonStyle(GaugeActionStyle())
+                    .accessibilityIdentifier("survey-export")
+            } else {
+                #if DEBUG
+                Toggle("Включить исходные ответы в JSON", isOn: $includeRaw)
+                    .tint(palette.operating)
+                    .accessibilityIdentifier("survey-include-raw")
+                Menu {
+                    Button("Отчёт JSON") { makeExport(.json, report: report) }
+                        .accessibilityIdentifier("survey-json")
+                    Button("Измерения CSV") { makeExport(.csv, report: report) }
+                        .accessibilityIdentifier("survey-csv")
+                    Button("Текстовая сводка") { makeExport(.summary, report: report) }
+                        .accessibilityIdentifier("survey-summary")
+                } label: {
+                    Label("Экспорт обследования", systemImage: "square.and.arrow.up")
+                        .frame(minHeight: 44)
+                }
+                .disabled(!model.surveyAllowsExport)
+                .accessibilityIdentifier("survey-export")
+                if !model.surveyAllowsExport {
+                    Text("Завершается последний запрос…").font(.footnote).foregroundStyle(palette.muted)
+                }
+                #endif
             }
         }
     }

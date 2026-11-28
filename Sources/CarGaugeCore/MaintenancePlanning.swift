@@ -82,6 +82,7 @@ public struct MaintenanceDue: Identifiable, Sendable {
     public let rule: MaintenanceRule?
     public let recordID: UUID?
     public var position: MaintenancePosition? = nil
+    public var exactCalendarDate = false
 }
 
 public enum MaintenanceDueEvaluator {
@@ -153,7 +154,8 @@ public enum MaintenanceDueEvaluator {
             || (dueKm != nil && (anchor?.odometer.certainty == .approximate || current.odometerCertainty == .approximate))
             || (dueHours != nil && (anchor?.engineHours.certainty == .approximate || current.engineHoursCertainty == .approximate))
         return .init(component: component, state: state, dueDate: dueDate, dueKm: dueKm, dueHours: dueHours,
-                     approximate: approximate, rule: rule, recordID: anchor?.id)
+                     approximate: approximate, rule: rule, recordID: anchor?.id,
+                     exactCalendarDate: dueDate != nil && anchor?.date.certainty == .exact)
     }
 
     private static func severity(_ remainder: Double?, lead: Double, exact: Bool) -> MaintenanceDueState {
@@ -191,7 +193,8 @@ public enum MaintenanceDueEvaluator {
                 state = .requiresInspection
             }
             return .init(component: component, state: state, dueDate: inspection.nextCheck, dueKm: nil, dueHours: nil,
-                         approximate: false, rule: nil, recordID: record.id, position: position)
+                         approximate: false, rule: nil, recordID: record.id, position: position,
+                         exactCalendarDate: inspection.nextCheck != nil)
         }
     }
 

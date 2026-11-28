@@ -3,6 +3,7 @@ import Foundation
 
 extension TelemetryArchive {
     static let healthSchema = """
+        CREATE INDEX observed_frame_by_start ON frame(utc-observed) WHERE observed>0;
         CREATE TABLE health_state(key TEXT PRIMARY KEY,payload BLOB NOT NULL) WITHOUT ROWID;
         CREATE TABLE monitoring_event(id TEXT PRIMARY KEY,issue TEXT NOT NULL,rule TEXT NOT NULL,version INTEGER NOT NULL,
           utc REAL NOT NULL,trip_id INTEGER REFERENCES trip(id),recovery INTEGER NOT NULL,payload BLOB NOT NULL);

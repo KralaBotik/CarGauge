@@ -107,21 +107,6 @@ extension TelemetryArchive: MaintenanceStore {
         let scope = """
             AND NOT EXISTS(SELECT 1 FROM event e WHERE e.trip_id=t.id AND e.kind='wall_clock_change')
             """
-        var observed: [ClosedRange<Double>] = []
-        var elapsed: Double?
-        var distance: Double?
-        try db.query("""
-            SELECT f.utc,f.observed,f.km FROM frame f JOIN trip t ON t.id=f.trip_id
-            WHERE f.observed>0 AND f.utc-f.observed>=?
-            """ + scope + " ORDER BY f.utc", [.real(lower)]) { row in
-            let end = sqlite3_column_double(row, 0)
-            let span = sqlite3_column_double(row, 1)
-            if end.isFinite, span.isFinite, span > 0 {
-                observed.append((end - span)...end)
-                elapsed = (elapsed ?? 0) + span
-            }
-            if let km = DriveSQL.number(row, 2) { distance = (distance ?? 0) + km }
-        }
         var inferred: [ClosedRange<Double>] = []
         try db.query("""
             SELECT engine_start_utc,started_utc FROM trip t
@@ -132,6 +117,28 @@ extension TelemetryArchive: MaintenanceStore {
             if start.isFinite, end.isFinite, end - start <= 65535 {
                 inferred.append(max(lower, start)...end)
             }
+        }
+        var observed: [ClosedRange<Double>] = []
+        var elapsed: Double?
+        var distance: Double?
+        try db.query("""
+            SELECT f.utc,f.observed,f.km FROM frame f JOIN trip t ON t.id=f.trip_id
+            WHERE f.observed>0 AND f.utc-f.observed>=?
+            """ + scope + " ORDER BY f.utc-f.observed", [.real(lower)]) { row in
+            let end = sqlite3_column_double(row, 0)
+            let span = sqlite3_column_double(row, 1)
+            if end.isFinite, span.isFinite, span > 0 {
+                if !inferred.isEmpty {
+                    let start = end - span
+                    if let last = observed.last, start <= last.upperBound {
+                        observed[observed.count - 1] = last.lowerBound...max(last.upperBound, end)
+                    } else {
+                        observed.append(start...end)
+                    }
+                }
+                elapsed = (elapsed ?? 0) + span
+            }
+            if let km = DriveSQL.number(row, 2) { distance = (distance ?? 0) + km }
         }
         let extra = inferred.isEmpty ? nil :
             max(0, Self.intervalUnionSeconds(observed + inferred) - Self.intervalUnionSeconds(observed))

@@ -166,7 +166,7 @@ struct FuelComparisonSheet: View {
         GaugePage(spacing: GaugeSpacing.section) {
             Button("Закрыть") { dismiss() }.buttonStyle(GaugeActionStyle())
             GaugeHeading(title: "Расход по сопоставимым поездкам",
-                         subtitle: "Одинаковая калибровка, близкие скорость и температура воздуха.")
+                         subtitle: "Одинаковая калибровка, близкие скорость, температура воздуха и доля холостого хода.")
             if let result {
                 GaugeSection(title: "Две наблюдавшиеся поездки") {
                     LabeledContent(result.older.startedAt.formatted(date: .abbreviated, time: .shortened),

@@ -46,6 +46,7 @@ enum MeasurementPhase {
     @Published private(set) var diagnosticStorageMessage: String?
     private let diagnosticStore = DiagnosticLocalStore()
     private var survey: DiagnosticSurvey?
+    private var surveyOwner: UUID?
     private var firstObservedOnLink: Date?
     private var adapterIdentification: String?
     #if DEBUG
@@ -217,6 +218,7 @@ enum MeasurementPhase {
                                          adapterName: configuredName ?? ble.connectedName,
                                          adapterIdentification: adapterIdentification, source: source,
                                          stationaryConfirmedByUser: true)
+        surveyOwner = runID
         survey = candidate
         publishSurvey(candidate)
     }
@@ -234,7 +236,9 @@ enum MeasurementPhase {
         if work.report.state != .running, !work.isExecuting, survey === work {
             survey = nil
             let completed = work.report
-            Task { await drive.saveManual(completed) }
+            let owner = surveyOwner
+            surveyOwner = nil
+            Task { await drive.saveManual(completed, owner: owner) }
         }
         diagnosticReport = work.report
         do {
