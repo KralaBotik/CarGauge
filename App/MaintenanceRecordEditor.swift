@@ -27,7 +27,7 @@ struct MaintenanceRecordEditor: View {
         MaintenanceEditorForm(title: "Обслуживание", identifier: "maintenance-record-editor",
                               saveIdentifier: "maintenance-save-record", save: { try await commit(.saveRecord(draft)) }) {
             Section("Общие сведения") {
-                MaintenanceBasisDate(title: "Дата работы", value: $draft.date)
+                MaintenanceBasisDate(title: "Дата и время работы", value: $draft.date, includesTime: true)
                 MaintenanceBasisNumber(title: "Пробег, км", value: $draft.odometer)
                 MaintenanceBasisNumber(title: "Моточасы, ч", value: $draft.engineHours)
                 Picker("Где выполнено", selection: $draft.provider) {

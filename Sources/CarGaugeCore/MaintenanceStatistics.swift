@@ -25,6 +25,7 @@ extension MaintenanceLedger {
     public var fuelIntervals: [MaintenanceFuelInterval] {
         guard fills.allSatisfy({ $0.date.value != nil }) else { return [] }
         let ordered = fills.sorted { ($0.date.value ?? .distantPast) < ($1.date.value ?? .distantPast) }
+        let duplicateDates = Set(Dictionary(grouping: ordered, by: \.date.value).filter { $0.value.count > 1 }.keys)
         var start: MaintenanceFill?
         var previous: MaintenanceFill?
         var volume = 0.0
@@ -42,11 +43,11 @@ extension MaintenanceLedger {
             if entry.fullTank {
                 if complete, let start, let left = start.odometer.value, let right = entry.odometer.value,
                    volume.isFinite && right > left,
-                   !ordered.contains(where: { $0.id != entry.id && $0.date.value == entry.date.value }) {
+                   !duplicateDates.contains(entry.date.value) {
                     result.append(.init(start: start, end: entry, litres: volume, distanceKm: right - left))
                 }
                 start = reliable ? entry : nil
-                complete = reliable && !ordered.contains(where: { $0.id != entry.id && $0.date.value == entry.date.value })
+                complete = reliable && !duplicateDates.contains(entry.date.value)
                 volume = 0
             }
             previous = entry

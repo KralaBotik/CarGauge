@@ -70,7 +70,9 @@ public enum MaintenanceDueState: String, Codable, Sendable, CaseIterable, Identi
 }
 
 public struct MaintenanceDue: Identifiable, Sendable {
-    public var id: String { rule?.id.uuidString ?? component.id + (recordID == nil ? "-catalog" : "-inspection") }
+    public var id: String {
+        rule?.id.uuidString ?? component.id + (recordID == nil ? "-catalog" : "-inspection-" + (position?.rawValue ?? "unspecified"))
+    }
     public let component: MaintenanceComponent
     public let state: MaintenanceDueState
     public let dueDate: Date?
@@ -79,6 +81,7 @@ public struct MaintenanceDue: Identifiable, Sendable {
     public let approximate: Bool
     public let rule: MaintenanceRule?
     public let recordID: UUID?
+    public var position: MaintenancePosition? = nil
 }
 
 public enum MaintenanceDueEvaluator {
@@ -98,10 +101,10 @@ public enum MaintenanceDueEvaluator {
                 result.append(schedule(rule: rule, component: component, anchor: anchor, current: current,
                                        settings: ledger.settings, now: now, calendar: calendar))
             }
-            if let condition = observedCondition(component: component, records: tracked, settings: ledger.settings,
-                                                  now: now, calendar: calendar) {
-                result.append(condition)
-            } else if rulesForComponent.isEmpty {
+            let findings = observedConditions(component: component, records: tracked, settings: ledger.settings,
+                                              now: now, calendar: calendar)
+            result += findings
+            if findings.isEmpty && rulesForComponent.isEmpty {
                 result.append(.init(component: component, state: .unknownHistory, dueDate: nil, dueKm: nil,
                                     dueHours: nil, approximate: false, rule: nil, recordID: nil))
             }
@@ -161,30 +164,48 @@ public enum MaintenanceDueEvaluator {
         return .notNeeded
     }
 
-    private static func observedCondition(component: MaintenanceComponent, records: [MaintenanceRecord], settings: MaintenanceSettings,
-                                          now: Date, calendar: Calendar) -> MaintenanceDue? {
-        let relevant = records.filter { $0.work.contains { affectsCondition($0, componentID: component.id) } }
-        guard let record = latest(relevant),
-              let inspection = record.work.last(where: { affectsCondition($0, componentID: component.id) })?.inspection,
-              inspection.finding == .replacement || inspection.finding == .recheck || inspection.nextCheck != nil
-        else { return nil }
-        let state: MaintenanceDueState
-        if inspection.finding == .replacement {
-            state = .replacementRecommended
-        } else if let date = inspection.nextCheck {
-            let remaining = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
-                                                    to: calendar.startOfDay(for: date)).day ?? 0
-            state = remaining <= 0 ? .requiresInspection : (remaining <= settings.leadDays ? .soon : .notNeeded)
-        } else {
-            state = .requiresInspection
+    private static func observedConditions(component: MaintenanceComponent, records: [MaintenanceRecord],
+                                           settings: MaintenanceSettings, now: Date, calendar: Calendar) -> [MaintenanceDue] {
+        let included = records.flatMap(\.work).filter {
+            $0.componentID == component.id && ($0.inspection?.finding == .replacement
+                || $0.inspection?.finding == .recheck || $0.inspection?.nextCheck != nil)
         }
-        return .init(component: component, state: state, dueDate: inspection.nextCheck, dueKm: nil, dueHours: nil,
-                     approximate: false, rule: nil, recordID: record.id)
+        let positions = Set(included.compactMap { $0.inspection?.position })
+        return MaintenancePosition.allCases.filter(positions.contains).compactMap { position in
+            let changes = records.filter { record in
+                record.work.contains { affectsCondition($0, componentID: component.id, position: position) }
+            }
+            guard let record = latest(changes),
+                  let work = record.work.last(where: { affectsCondition($0, componentID: component.id, position: position) }),
+                  let inspection = work.inspection, inspection.position == position,
+                  inspection.finding == .replacement || inspection.finding == .recheck || inspection.nextCheck != nil
+            else { return nil }
+            let state: MaintenanceDueState
+            if inspection.finding == .replacement {
+                state = .replacementRecommended
+            } else if let date = inspection.nextCheck {
+                let remaining = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                                        to: calendar.startOfDay(for: date)).day ?? 0
+                state = remaining <= 0 ? .requiresInspection : (remaining <= settings.leadDays ? .soon : .notNeeded)
+            } else {
+                state = .requiresInspection
+            }
+            return .init(component: component, state: state, dueDate: inspection.nextCheck, dueKm: nil, dueHours: nil,
+                         approximate: false, rule: nil, recordID: record.id, position: position)
+        }
     }
 
-    private static func affectsCondition(_ work: MaintenanceWork, componentID: String) -> Bool {
+    private static func affectsCondition(_ work: MaintenanceWork, componentID: String, position: MaintenancePosition) -> Bool {
         guard work.componentID == componentID else { return false }
-        return work.operation == .replacement || work.inspection?.nextCheck != nil
-            || (work.inspection.map { $0.finding != .unknown } ?? false)
+        let placement = work.inspection?.position ?? .unspecified
+        let clears = work.operation == .replacement || work.inspection?.finding == .satisfactory
+        if placement == position {
+            return clears || work.inspection?.nextCheck != nil || (work.inspection.map { $0.finding != .unknown } ?? false)
+        }
+        guard clears else { return false }
+        if work.operation == .replacement && placement == .unspecified { return true }
+        if placement == .front { return position == .frontLeft || position == .frontRight }
+        if placement == .rear { return position == .rearLeft || position == .rearRight }
+        return false
     }
 }

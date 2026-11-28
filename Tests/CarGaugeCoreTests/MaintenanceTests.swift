@@ -129,3 +129,21 @@ private func issue(_ ledger: MaintenanceLedger, current: MaintenanceCounters = .
     try ledger.apply(.deleteRecord(record.id))
     #expect(ledger.records.isEmpty)
 }
+
+@Test func maintenanceConditionCannotBeClearedByCheckingTheOtherSide() throws {
+    var ledger = MaintenanceLedger()
+    let leftFailed = MaintenanceWork(componentID: "front-discs", operation: .inspection,
+                                     inspection: .init(position: .frontLeft, finding: .replacement))
+    let rightPassed = MaintenanceWork(componentID: "front-discs", operation: .inspection,
+                                      inspection: .init(position: .frontRight, finding: .satisfactory))
+    try ledger.apply(.saveRecord(.init(date: .init(day(2026, 7, 1)), work: [leftFailed])))
+    try ledger.apply(.saveRecord(.init(date: .init(day(2026, 7, 2)), work: [rightPassed])))
+    let active = MaintenanceDueEvaluator.statuses(ledger: ledger, current: .init(), now: day(2026, 7, 3), calendar: utc)
+    #expect(active.first { $0.component.id == "front-discs" }?.position == .frontLeft)
+    #expect(active.first { $0.component.id == "front-discs" }?.state == .replacementRecommended)
+    let replaced = MaintenanceWork(componentID: "front-discs", operation: .replacement,
+                                   inspection: .init(position: .front))
+    try ledger.apply(.saveRecord(.init(date: .init(day(2026, 7, 3)), work: [replaced])))
+    let cleared = MaintenanceDueEvaluator.statuses(ledger: ledger, current: .init(), now: day(2026, 7, 4), calendar: utc)
+    #expect(cleared.first { $0.component.id == "front-discs" }?.state == .unknownHistory)
+}

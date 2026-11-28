@@ -337,6 +337,9 @@ struct MaintenanceView: View {
     private func dueRow(_ issue: MaintenanceDue) -> some View {
         VStack(alignment: .leading, spacing: GaugeSpacing.xsmall) {
             Text(issue.component.title).font(.headline)
+            if let position = issue.position, position != .unspecified {
+                Text(position.title).font(.caption).foregroundStyle(palette.muted)
+            }
             Text(issue.state.title).font(.subheadline)
                 .foregroundStyle(issue.state.rank >= 3 ? palette.warning : palette.muted)
             if let rule = issue.rule {

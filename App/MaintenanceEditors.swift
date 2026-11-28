@@ -133,6 +133,7 @@ struct MaintenanceBasisNumber: View {
 struct MaintenanceBasisDate: View {
     let title: String
     @Binding var value: MaintenanceValue<Date>
+    var includesTime = false
 
     var body: some View {
         Picker(title, selection: Binding(get: { value.certainty }, set: { certainty in
@@ -142,7 +143,7 @@ struct MaintenanceBasisDate: View {
         }
         if value.certainty != .unknown {
             DatePicker(title, selection: Binding(get: { value.value ?? .now }, set: { value.value = $0 }),
-                       in: ...Date.now, displayedComponents: .date)
+                       in: ...Date.now, displayedComponents: includesTime ? [.date, .hourAndMinute] : .date)
         }
     }
 }
@@ -197,7 +198,7 @@ struct MaintenanceFillEditor: View {
             try await commit(.saveFill(draft))
         }) {
             Section("Данные заправки") {
-                MaintenanceBasisDate(title: "Дата", value: $draft.date)
+                MaintenanceBasisDate(title: "Дата и время заправки", value: $draft.date, includesTime: true)
                 MaintenanceBasisNumber(title: "Пробег, км", value: $draft.odometer)
                 MaintenanceNumberField(title: "Литры", value: $volume, identifier: "maintenance-fill-litres")
                 TextField("Тип топлива", text: $draft.fuel)
