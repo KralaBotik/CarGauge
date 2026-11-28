@@ -23,7 +23,7 @@ struct DriveDashboardReadings: View {
                     if rate == nil {
                         Text(drive.targetProfileConfirmed
                              ? "Оценка доступна при свежих данных и штатном замкнутом контуре."
-                             : "Ожидание подтверждённого профиля G4FC.")
+                             : "Ожидание совпадения карт PID с профилем G4FC.")
                             .font(.caption).foregroundStyle(palette.muted)
                     }
                     ForEach(drive.supported.filter { drive.visibleSignals.contains($0) }) { signal in
@@ -208,6 +208,9 @@ private struct DriveTripDetail: View {
     private func plotSection(_ title: String, unit: String, points: [TripPlot.Point],
                              length: Double, tolerance: Double) -> some View {
         let reduced = reducedPlot(points)
+        let singletons = Set(Dictionary(grouping: reduced, by: \.segment).compactMap { _, points in
+            points.count == 1 ? points.first?.id : nil
+        })
         let nearest = selection.flatMap { x in
             points.min(by: { abs($0.time - x) < abs($1.time - x) })
                 .flatMap { abs($0.time - x) <= tolerance ? $0.value : nil }
@@ -225,7 +228,7 @@ private struct DriveTripDetail: View {
                         LineMark(x: .value("Секунды", point.time), y: .value(title, point.value),
                                  series: .value("Участок", point.segment))
                             .foregroundStyle(palette.accent)
-                        if reduced.count == 1 {
+                        if singletons.contains(point.id) {
                             PointMark(x: .value("Секунды", point.time), y: .value(title, point.value))
                                 .foregroundStyle(palette.accent)
                         }

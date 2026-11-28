@@ -18,14 +18,12 @@ import Foundation
     private var cooldownOwner: UUID?
     private var cooldown = OptionalPollCooldown()
     private var plan = VehiclePollPlan()
-    private var startEvidence = EngineStartEvidence()
+    private var startTracker = EngineStartTracker()
     private var nextPage: OBDSupportPage? = .pids01To20
     private var automatic: DiagnosticSurvey?
     private var lastAutomatic: ContinuousClock.Instant?
     private var scheduledOnLink = false
-    private var pendingStart: Date?
     private var connectedAt: Date?
-    private var previousRuntime: Double?
     private var lastVoltage: Double?
     private var currentCalibration: Double = 1
     private var lastThermalLevel: ThermalLevel?
@@ -65,15 +63,13 @@ import Foundation
             cooldownOwner = owner
         }
         plan = VehiclePollPlan()
-        startEvidence = EngineStartEvidence()
+        startTracker = EngineStartTracker()
         nextPage = .pids01To20
         supported = []
         readings = [:]
         fuel = nil
         lastVoltage = nil
-        pendingStart = nil
         connectedAt = date
-        previousRuntime = nil
         lastThermalLevel = nil
         automatic = nil
         scheduledOnLink = false
@@ -100,6 +96,7 @@ import Foundation
                                       monotonic: DriveClock.now, quality: .noData))
         }
         for item in batch { readings[item.signal] = item }
+        if readings[.rpm]?.quality != .received || (readings[.rpm]?.value ?? 0) <= 0 { fuel = nil }
         if let voltage = batch.first(where: { $0.signal == .ecuVoltage || $0.signal == .adapterVoltage }) {
             lastVoltage = voltage.monotonic
         }
@@ -131,6 +128,11 @@ import Foundation
                 guard liveOwner == owner else { return }
                 batch.append(reading)
                 readings[signal] = reading
+                if [.map, .intake, .fuelStatus, .commandedLambda].contains(signal),
+                   SpeedDensity.estimate(readings: readings, at: DriveClock.now,
+                                         targetProfile: plan.isTargetProfile, calibration: currentCalibration) == nil {
+                    fuel = nil
+                }
             }
         } catch {
             if error as? OBDError == .timeout, let command = optionalCommand, liveOwner == owner {
@@ -145,20 +147,10 @@ import Foundation
         let rpm = batch.first { $0.signal == .rpm && $0.quality == .received }
         let speed = batch.first { $0.signal == .speed && $0.quality == .received }
         let runtime = batch.first { $0.signal == .runTime }
-        if rpm?.value == 0 {
-            startEvidence = EngineStartEvidence()
-            pendingStart = nil
-        } else if let runtime {
-            if let value = runtime.value, runtime.quality == .received,
-               let previousRuntime, value < previousRuntime {
-                startEvidence = EngineStartEvidence()
-                pendingStart = nil
-                do { try await archive.end(owner: owner, reason: "runtime_reset", mayResume: true) }
-                catch { storageError = error.localizedDescription }
-                guard liveOwner == owner, !Task.isCancelled else { return }
-            }
-            if runtime.quality == .received { previousRuntime = runtime.value }
-            if let result = startEvidence.observe(runtime, rpm: rpm) { pendingStart = result }
+        if startTracker.update(runtime: runtime, rpm: rpm, at: now) {
+            do { try await archive.end(owner: owner, reason: "runtime_reset", mayResume: true) }
+            catch { storageError = error.localizedDescription }
+            guard liveOwner == owner, !Task.isCancelled else { return }
         }
         let estimate = linkFailure == nil && batch.contains { $0.signal == .map && $0.quality == .received }
             ? SpeedDensity.estimate(readings: readings, at: now, targetProfile: plan.isTargetProfile,
@@ -168,7 +160,7 @@ import Foundation
 
         let frame = TripFrame(timestamp: .now, monotonic: now, readings: batch, rpm: rpm?.value,
                               speed: speed?.isFresh(at: now, within: 3) == true ? speed?.value : nil,
-                              fuel: estimate, estimatedEngineStart: pendingStart, connectedAt: connectedAt)
+                              fuel: estimate, estimatedEngineStart: startTracker.estimate, connectedAt: connectedAt)
         do {
             try await archive.record(owner: owner, frame: frame)
             if thermal != lastThermalLevel && (thermal != .normal || lastThermalLevel != nil) {

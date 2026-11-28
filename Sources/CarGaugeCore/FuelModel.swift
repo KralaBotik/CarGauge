@@ -85,3 +85,40 @@ public struct EngineStartEvidence: Sendable {
         return preceding.timestamp.addingTimeInterval(-old)
     }
 }
+
+/// Links the runtime counter to observed engine boundaries in a single BLE link.
+public struct EngineStartTracker: Sendable {
+    private var evidence = EngineStartEvidence()
+    private var previousRuntime: Double?
+    private var previousZero: Double?
+    public private(set) var estimate: Date?
+
+    public init() {}
+
+    /// Returns true when the counter falls during what had been one running period.
+    public mutating func update(runtime: DriveReading?, rpm: DriveReading?, at now: Double) -> Bool {
+        if rpm?.quality == .received, rpm?.value == 0 {
+            if let previousZero, now > previousZero, now - previousZero <= TripInterval.maximumGap {
+                previousRuntime = nil
+            }
+            previousZero = now
+            evidence = EngineStartEvidence()
+            estimate = nil
+            return false
+        }
+        previousZero = nil
+        guard let runtime else { return false }
+        guard runtime.quality == .received, let value = runtime.value else {
+            _ = evidence.observe(runtime, rpm: rpm)
+            return false
+        }
+        let reset = previousRuntime.map { value < $0 } ?? false
+        if reset {
+            evidence = EngineStartEvidence()
+            estimate = nil
+        }
+        previousRuntime = value
+        if let result = evidence.observe(runtime, rpm: rpm) { estimate = result }
+        return reset
+    }
+}

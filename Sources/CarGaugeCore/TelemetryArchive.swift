@@ -195,10 +195,11 @@ public actor TelemetryArchive {
         var chartEpoch = 0
         var fuelSegment = 0
         var lastFuel: Double?
+        var lastFuelExpiry: Double?
         var openFrame: Int64?
         return try db.transaction(readOnly: true) {
             try db.query("""
-                SELECT f.id,f.elapsed,f.rate,r.signal,r.value,r.quality,r.offset,f.discontinuous FROM frame f
+                SELECT f.id,f.elapsed,f.rate,r.signal,r.value,r.quality,r.offset,f.discontinuous,f.fuel_valid_for FROM frame f
                   LEFT JOIN reading r ON r.frame_id=f.id WHERE f.trip_id=? ORDER BY f.elapsed,f.id
                 """, [.integer(tripID)]) { row in
                 let id = sqlite3_column_int64(row, 0)
@@ -211,11 +212,14 @@ public actor TelemetryArchive {
                         lastFuel = nil
                     }
                     if let rate = DriveSQL.number(row, 2) {
-                        if lastFuel.map({ time - $0 > TripInterval.maximumGap }) ?? true { fuelSegment += 1 }
+                        if (lastFuel.map { time - $0 > TripInterval.maximumGap } ?? true)
+                            || (lastFuelExpiry.map { time > $0 } ?? false) { fuelSegment += 1 }
                         fuel.append(.init(id: id, time: time, value: rate, segment: fuelSegment))
                         lastFuel = time
+                        lastFuelExpiry = DriveSQL.number(row, 8).map { time + $0 }
                     } else {
                         lastFuel = nil
+                        lastFuelExpiry = nil
                     }
                 }
                 guard let signal = DriveSignal(rawValue: UInt8(clamping: sqlite3_column_int(row, 3))),
@@ -327,14 +331,15 @@ public actor TelemetryArchive {
                            delta: TripInterval?, interrupted: Bool, database db: DriveSQL) throws {
         try db.run("""
             INSERT INTO frame(trip_id,utc,elapsed,rpm,speed,rate,calibration,observed,km,base_litres,litres,
-                              paired_km,paired_litres,idle,idle_litres,discontinuous,fuel_method)
-                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                              paired_km,paired_litres,idle,idle_litres,discontinuous,fuel_method,fuel_valid_for)
+                              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, [.integer(id), .time(frame.timestamp), .real(elapsed), .optional(frame.rpm), .optional(frame.speed),
                   .optional(frame.fuel?.litresPerHour), .optional(frame.fuel?.calibration),
                   .real(delta?.observedSeconds ?? 0), .optional(delta?.distanceKm), .optional(delta?.baseLitres),
                   .optional(delta?.litres), .optional(delta?.pairedKm), .optional(delta?.pairedLitres),
                   .real(delta?.idleSeconds ?? 0), .optional(delta?.idleLitres), .integer(interrupted ? 1 : 0),
-                  frame.fuel.map { _ in .text(FuelRate.method) } ?? .null])
+                  frame.fuel.map { _ in .text(FuelRate.method) } ?? .null,
+                  .optional(frame.fuel?.validUntil.map { $0 - frame.monotonic })])
         let frameID = db.lastID
         for reading in frame.readings {
             try db.run("INSERT INTO reading(frame_id,signal,utc,offset,value,quality,bytes) VALUES(?,?,?,?,?,?,?)",
@@ -350,7 +355,7 @@ public actor TelemetryArchive {
         CREATE TABLE frame(id INTEGER PRIMARY KEY,trip_id INTEGER NOT NULL REFERENCES trip(id),
           utc REAL NOT NULL,elapsed REAL NOT NULL,rpm REAL,speed REAL,rate REAL,calibration REAL,observed REAL NOT NULL,
           km REAL,base_litres REAL,litres REAL,paired_km REAL,paired_litres REAL,idle REAL NOT NULL,idle_litres REAL,
-          discontinuous INTEGER NOT NULL,fuel_method TEXT,UNIQUE(trip_id,elapsed));
+          discontinuous INTEGER NOT NULL,fuel_method TEXT,fuel_valid_for REAL,UNIQUE(trip_id,elapsed));
         CREATE TABLE reading(frame_id INTEGER NOT NULL REFERENCES frame(id),signal INTEGER NOT NULL,utc REAL NOT NULL,
           offset REAL NOT NULL,value REAL,quality TEXT NOT NULL,bytes TEXT NOT NULL,PRIMARY KEY(frame_id,signal)) WITHOUT ROWID;
         CREATE TABLE gap(id INTEGER PRIMARY KEY,trip_id INTEGER NOT NULL REFERENCES trip(id),started_utc REAL NOT NULL,

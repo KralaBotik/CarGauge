@@ -239,3 +239,25 @@ private func frame(_ tick: Double, speed: Double? = 36, rpm: Double? = 850, rate
     #expect(sample.value == 128 * 100.0 / 255)
     #expect(!VehiclePollPlan.advertised(base: 32, mask: 0x80058011).contains(0x2F))
 }
+
+@Test func recordedStopDoesNotTreatLateCounterOnNextDriveAsReset() {
+    var tracker = EngineStartTracker()
+    let first = tracker.update(runtime: reading(.runTime, 100, at: 10), rpm: reading(.rpm, 800, at: 10), at: 10)
+    let zero1 = tracker.update(runtime: nil, rpm: reading(.rpm, 0, at: 11), at: 11)
+    let zero2 = tracker.update(runtime: nil, rpm: reading(.rpm, 0, at: 12), at: 12)
+    let next = tracker.update(runtime: nil, rpm: reading(.rpm, 800, at: 13), at: 13)
+    let firstCounter = tracker.update(runtime: reading(.runTime, 8, at: 14), rpm: reading(.rpm, 800, at: 14), at: 14)
+    #expect(!first && !zero1 && !zero2 && !next && !firstCounter)
+    #expect(tracker.estimate == nil)
+    let reset = tracker.update(runtime: reading(.runTime, 3, at: 16), rpm: reading(.rpm, 800, at: 16), at: 16)
+    #expect(reset)
+}
+
+@Test func expiredEstimateCannotCoverFollowingInterval() throws {
+    let sample = try #require(SpeedDensity.estimate(readings: inputs(), at: 10, targetProfile: true))
+    let first = TripFrame(timestamp: .now, monotonic: 10, readings: [], rpm: 850, speed: 36, fuel: sample)
+    let interval = try #require(TripInterval.between(first, frame(14)))
+    #expect(interval.distanceKm == 0.04)
+    #expect(interval.litres == nil)
+    #expect(interval.pairedKm == nil)
+}

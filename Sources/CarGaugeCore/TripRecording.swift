@@ -45,7 +45,8 @@ public struct TripInterval: Equatable, Sendable {
             interval.distanceKm = (x + y) * elapsed / 7200
             if x == 0, y == 0 { interval.idleSeconds = elapsed }
         }
-        if let x = a.fuel, let y = b.fuel, x.calibration == y.calibration {
+        if let x = a.fuel, let y = b.fuel, x.calibration == y.calibration,
+           x.validUntil.map({ $0 >= b.monotonic }) ?? true {
             interval.baseLitres = (x.baseLitresPerHour + y.baseLitresPerHour) * elapsed / 7200
             interval.litres = (x.litresPerHour + y.litresPerHour) * elapsed / 7200
         }
